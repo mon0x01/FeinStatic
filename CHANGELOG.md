@@ -1,3 +1,12 @@
+## 2.0.0
+
+- Persist each incoming Raft snapshot chunk to SQLite with `synchronous=FULL` before acknowledging its byte offset.
+- Resume an acknowledged snapshot prefix after receiver restart, including when the sender process restarts and requests offset zero.
+- Recover completed-but-not-yet-installed snapshots on receiver startup; retain the full staged payload if atomic Ledger/Raft installation fails, and clear it only after successful installation.
+- Add SQLite schema v5 -> v6 staging tables without changing the authenticated wire protocol v8 or rewriting existing Ledger/financial state.
+- Add restart, offset negotiation, completed-stage recovery, checksum, storage-bound, and direct v5 -> v6 additive-migration regression coverage.
+- Retain full-history snapshot serialization and its 64 MiB cap; this release makes transfer progress durable but does not introduce state-only or unbounded snapshots.
+
 ## 1.9.0
 
 - Add a dedicated peer lifecycle state machine with `UNKNOWN`, `HEALTHY`, `DEGRADED`, `OFFLINE`, `HALF_OPEN`, and `DISABLED` states.

@@ -1,4 +1,4 @@
-# FeinStatic architecture (v1.9.0)
+# FeinStatic architecture (v2.0.0)
 
 ## Overview
 
@@ -34,15 +34,16 @@ Ledger block append and the off-chain FinancialPlatform snapshot remain distinct
 
 ## SQLite schema
 
-Schema v5 stores:
+Schema v6 stores:
 
 - `blocks` and `wallets` for the Ledger;
 - `financial_state` for the versioned, checksummed FinancialPlatform snapshot;
 - `mempool_transactions` for ordered durable transaction admission;
 - `raft_state` for a revisioned, checksummed consensus-state snapshot;
-- `raft_snapshots` for separately checksummed Ledger application snapshots keyed by Raft index.
+- `raft_snapshots` for separately checksummed Ledger application snapshots keyed by Raft index;
+- `raft_snapshot_staging` and `raft_snapshot_staging_chunks` for one crash-resumable incoming snapshot transfer.
 
-The v1-to-v2 migration adds financial state, v2-to-v3 adds durable mempool rows, v3-to-v4 adds Raft state, and v4-to-v5 adds the separate application-snapshot table. These migrations are additive. v1.3.0 leaves existing Ledger, wallet, and financial-state payloads intact while allowing schema version to advance to 5.
+The v1-to-v2 migration adds financial state, v2-to-v3 adds durable mempool rows, v3-to-v4 adds Raft state, v4-to-v5 adds the separate application-snapshot table, and v5-to-v6 adds incoming snapshot staging metadata/chunks. These migrations are additive. The v5-to-v6 migration does not rewrite existing Ledger, wallet, financial-state, mempool, Raft-state, or completed-snapshot rows.
 
 The Raft state binds the configured cluster ID, sorted membership fingerprint, and exact Ledger checkpoint to term, vote, retained log suffix, snapshot boundary, commit index, and applied index. Each application snapshot has a separate SHA-256 checksum; checksums detect accidental corruption but are not authentication against a local attacker able to rewrite the database and recompute them.
 
@@ -72,6 +73,6 @@ In Raft mode, direct legacy block submission and legacy pull-based chain synchro
 
 ## Cluster and fault assumptions
 
-Raft voter membership is odd-sized (3, 5, 7, or 9) and can change through the two-entry joint-consensus transition. A shared, pre-provisioned roster may contain up to nine voter/learner endpoints; learners replicate but do not vote, and must catch up to the committed index before promotion. Every node shares the exact initial roster, cluster ID, Ledger checkpoint, and compatible chain parameters. Each member owns a database and trusts the other provisioned identities. The implementation models crash/recovery failures with non-Byzantine members. v1.2.0 compacts applied log prefixes and transfers bounded full-Ledger snapshots; v1.3.0 persists membership in both current and snapshot-boundary state. It does not provide Byzantine tolerance, peer discovery, TLS, a complete DDoS defense, or production distributed finality. v1.7 inbound token buckets bound connection/handshake attempt rates only. Snapshot payloads are capped at 64 MiB and contain the complete Ledger history, so this is not yet a state-only or unbounded snapshot design.
+Raft voter membership is odd-sized (3, 5, 7, or 9) and can change through the two-entry joint-consensus transition. A shared, pre-provisioned roster may contain up to nine voter/learner endpoints; learners replicate but do not vote, and must catch up to the committed index before promotion. Every node shares the exact initial roster, cluster ID, Ledger checkpoint, and compatible chain parameters. Each member owns a database and trusts the other provisioned identities. The implementation models crash/recovery failures with non-Byzantine members. v1.2.0 compacts applied log prefixes and transfers bounded full-Ledger snapshots; v1.3.0 persists membership in both current and snapshot-boundary state. It does not provide Byzantine tolerance, peer discovery, TLS, a complete DDoS defense, or production distributed finality. v1.7 inbound token buckets bound connection/handshake attempt rates only. Snapshot payloads are capped at 64 MiB and contain the complete Ledger history. v2.0.0 persists acknowledged receive chunks across restart, but still assembles/replays the complete payload in memory; this is not yet a state-only, segmented, or unbounded snapshot design.
 
 See [`networking.md`](networking.md), [`raft.md`](raft.md), and [`raft-networking-guide.md`](raft-networking-guide.md).

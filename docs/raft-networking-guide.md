@@ -1,4 +1,4 @@
-# Three-node Raft loopback lab (v1.9.0)
+# Three-node Raft loopback lab (v2.0.0)
 
 This procedure demonstrates the actual Raft-over-authenticated-TCP runtime on one machine. It is a development lab, not a public-network deployment guide.
 

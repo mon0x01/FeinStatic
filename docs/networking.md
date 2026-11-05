@@ -1,4 +1,4 @@
-# FeinStatic peer networking (v1.9.0)
+# FeinStatic peer networking (v2.0.0)
 
 ## Scope
 
@@ -115,4 +115,4 @@ The legacy authenticated `node-listen-auth`, `peer-status-auth`, `peer-sync-auth
 
 ## Remaining work and explicit limits
 
-Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket admission and automatic best-effort transaction gossip; v1.8.0 adds bounded concurrent inbound I/O while preserving serialized state access; v1.9.0 adds peer lifecycle states and a unified retry circuit breaker. These controls are not an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.
+Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket admission and automatic best-effort transaction gossip; v1.8.0 adds bounded concurrent inbound I/O while preserving serialized state access; v1.9.0 adds peer lifecycle states and a unified retry circuit breaker; v2.0.0 makes acknowledged Raft snapshot-transfer chunks durable across receiver restarts without changing wire protocol v8. These controls are not an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.
