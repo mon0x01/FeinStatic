@@ -12,3 +12,47 @@ compile_commands.json
 
 __pycache__/
 *.py[cod]
+
+# FeinStatic private/local state (never publish)
+/runtime/
+/.FeinStatic-backups/
+/.FeinStatic-stage.*/
+/build/
+/cmake-build-*/
+
+# Databases, journals, logs and backups
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.log
+*.tmp
+*.bak
+*.backup
+
+# Credentials, identity material, vaults and environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.secret
+*.token
+*.credentials
+/secrets/
+/secret/
+/identity/
+/identities/
+/vaults/
+/credentials/
+
+# Local developer state
+.DS_Store
+Thumbs.db
