@@ -29,7 +29,7 @@ Each member owns a separate database. Never start two writable FeinStatic proces
 4. Generated responses are placed into bounded global and per-peer outbound queues. A fixed-size shared worker pool schedules one in-flight request per peer, preserving per-peer FIFO ordering without creating a thread per member. Heartbeats may be coalesced/dropped under pressure; failures use capped exponential retry backoff, while Raft retransmission/election behavior supplies protocol-level recovery.
 5. The main server loop drives `tick`, inbound `receive`, proposals, and committed application. `RaftNode` itself remains single-thread-affine and is never shared concurrently.
 
-The outbound queues are bounded by global message count/bytes and per-peer message count. Under pressure, stale heartbeat work is coalesced or dropped before essential queued work; health counters report drops and failures. Retry delay grows exponentially and is capped. The inbound event loop remains serialized and is not an Internet-facing admission-control system.
+The outbound queues are bounded by global message count/bytes and per-peer message count. Under pressure, stale heartbeat work is coalesced or dropped before essential queued work; health counters report drops and failures. Retry delay grows exponentially and is capped. The v1.8.0 accept loop feeds a bounded inbound worker pool for handshake/frame I/O. All Raft/Ledger state-machine operations remain serialized behind one per-node state mutex; response writes occur after unlocking. The queue and token buckets bound local work but are not an Internet-facing admission-control system.
 
 ## Ledger command and application model
 

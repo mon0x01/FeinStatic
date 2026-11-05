@@ -1,4 +1,4 @@
-# FeinStatic architecture (v1.7.0)
+# FeinStatic architecture (v1.8.0)
 
 ## Overview
 
@@ -13,7 +13,7 @@ The major boundaries are:
 - **FinancialPlatform:** shared candidate-state boundary coordinating Match and Flow through one SettlementBook and one persisted platform snapshot.
 - **BridgeService:** recoverable native-FST workflow between the private Ledger and off-chain SettlementBook.
 - **Storage:** SQLite schema/migrations, block/wallet rows, durable mempool, financial snapshots, and Raft state.
-- **Network:** bounded TCP framing, independent Ed25519 node identities, explicit trust stores, encrypted authenticated sessions, inbound token-bucket admission, and shared Raft/transaction-gossip dispatch.
+- **Network:** bounded TCP framing, independent Ed25519 node identities, explicit trust stores, encrypted authenticated sessions, inbound token-bucket admission, a bounded inbound socket worker pool, and shared Raft/transaction-gossip dispatch.
 - **Consensus:** transport-agnostic Raft kernel plus `RaftLedgerAdapter`, which maps committed log commands to Ledger block application.
 
 ## State ownership and financial units
@@ -50,7 +50,7 @@ The Raft state binds the configured cluster ID, sorted membership fingerprint, a
 
 The request/response protocol is bounded and uses wire version 8. Every authenticated connection performs Ed25519 mutual challenge-response and binds both ephemeral X25519 public keys into the signed session transcript. HKDF-SHA-256 derives directional AES-256-GCM keys; every post-handshake application frame is encrypted and authenticated with session/type/sequence associated data, and also signed over its ciphertext. This supplies peer authentication, integrity, confidentiality for application payloads, and replay resistance. It is not TLS and does not hide transport metadata.
 
-The server accepts and processes one inbound request at a time on its serialized event loop. Before handshake parsing, each accepted socket consumes a token from global and per-address token buckets; the address table is bounded and expires idle entries. Ledger and Raft state-machine operations remain single-writer/single-thread-affine. In Raft mode, a fixed-size shared outbound worker pool dispatches separate bounded per-peer queues for consensus RPCs and best-effort transaction gossip. Raft traffic has priority with an eight-message streak limit to prevent permanent gossip starvation. Each peer has at most one in-flight message, preserving FIFO within each traffic class. Retryable failures are requeued at the head with capacity accounting retained; Raft and gossip maintain independent capped exponential backoff. A periodic durable-mempool scan reconstructs gossip after restart and relieves bounded queue backpressure. Operator health reports expose combined queue and failure counters.
+A single accept loop applies global and per-address token buckets before placing accepted sockets into a bounded queue. A fixed-size inbound worker pool (default four, maximum sixteen) performs handshake and frame I/O on worker-owned Asio contexts. The pending queue defaults to 64 sockets and is capped at 4096; when full, newly accepted sockets are closed instead of accumulating without bound. Each worker can wait on one connection at a time, with every socket operation bounded by the configured peer timeout. A per-node state mutex serializes all reads and writes of Ledger, Raft, trust-policy, and endpoint state. Request handlers prepare their response while holding that mutex, release it, and only then perform network writes. Thus slow handshakes and slow response readers no longer monopolize the accept loop or state lock, while Ledger/Raft mutation remains single-writer. In Raft mode, a fixed-size shared outbound worker pool dispatches separate bounded per-peer queues for consensus RPCs and best-effort transaction gossip. Raft traffic has priority with an eight-message streak limit to prevent permanent gossip starvation. Each peer has at most one in-flight message, preserving FIFO within each traffic class. Retryable failures are requeued at the head with capacity accounting retained; Raft and gossip maintain independent capped exponential backoff. A periodic durable-mempool scan reconstructs gossip after restart and relieves bounded queue backpressure. Operator health reports expose combined queue and failure counters.
 
 ## Raft runtime and Ledger application
 

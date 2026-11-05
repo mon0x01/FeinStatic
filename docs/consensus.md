@@ -48,6 +48,6 @@ Programmatic users of `Ledger::consider_chain` or `PeerClient::synchronize` must
 - The tie-break can be ground and is not consensus. Two authenticated peers can still show different tips until they exchange candidates; no quorum or economic security model is implemented.
 - There is no difficulty retargeting, checkpoint/finality, fork-choice based on variable cumulative work, reorg depth policy, peer reputation, or defense against eclipse/Sybil attacks.
 - A malicious trusted peer can still consume CPU/bandwidth within the protocol's frame/batch/time bounds. v1.7 token-bucket admission limits connection attempts globally and per source address, but is not a complete DoS defense.
-- The current node remains single-writer and single-threaded. Each node must use its own SQLite database. Never share one writable database file across node processes.
+- The v1.8.0 node accepts and performs bounded inbound socket I/O concurrently, but Ledger/Raft state transitions remain single-writer under one per-node state mutex. Each node must use its own SQLite database. Never share one writable database file across node processes.
 - Protocol v8 encrypts authenticated peer application frames and supports signed trust-policy pushes using X25519/HKDF-SHA-256/AES-256-GCM; this is not TLS and requires independent cryptographic review before use outside controlled networks.
 - A locally selected chain is not proof of irreversible or globally agreed state. No real funds or production custody should depend on this prototype.

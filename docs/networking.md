@@ -1,10 +1,18 @@
-# FeinStatic peer networking (v1.7.0)
+# FeinStatic peer networking (v1.8.0)
 
 ## Scope
 
 The TCP peer layer provides bounded request/response framing, chain-parameter compatibility checks, transaction relay, legacy block relay/synchronization, and authenticated peer identities. v1.0.0 adds live Raft RPC dispatch and replicated Ledger block application for a fixed permissioned crash-fault cluster. The Raft cluster path is described in detail in [`raft.md`](raft.md) and the three-node lab procedure in [`raft-networking-guide.md`](raft-networking-guide.md).
 
 The legacy non-Raft peer mode remains available for development, but uses deterministic local fork choice rather than distributed consensus. In Raft mode, direct block import and pull-based chain synchronization are disabled to prevent bypassing the replicated log.
+
+## Bounded inbound I/O workers (v1.8.0)
+
+The listener retains one accept loop, but no longer performs the peer handshake or request processing inline. Every accepted socket first passes the existing global and per-address token buckets, then enters a bounded FIFO connection queue. A fixed worker pool (default 4, configurable from 1 to 16 through `InboundAdmissionConfig::worker_count`) owns independent Asio contexts and processes one connection per worker. The pending queue defaults to 64 and is configurable from 1 to 4096 through `InboundAdmissionConfig::maximum_queued_connections`. If the queue is full, the accepted socket is closed immediately; clients must retry.
+
+Handshake reads, challenge exchange, and request-frame reads run concurrently. All operations that inspect or mutate Ledger, Raft, trust-policy, or endpoint state are protected by a per-node state mutex. The handler builds the response under the state lock and releases the lock before sending bytes, so a slow or non-reading peer cannot hold the state boundary during response transmission. This is bounded I/O concurrency, **not parallel Ledger execution**: state transitions still occur one at a time. Each individual socket operation is timeout-bounded. Shutdown drains the pending queue and joins active workers; active operations exit when their configured socket timeout or peer disconnect completes.
+
+The worker pool does not provide a complete DoS defense. Token buckets and the bounded queue cap local resource use after TCP accept, but do not replace kernel SYN-flood protection, upstream bandwidth limits, per-request CPU budgets, or an Internet-facing abuse mitigation layer.
 
 ## Node identity and trust
 
@@ -76,7 +84,7 @@ The outbound dispatcher also periodically scans the durable mempool and refills 
 
 ## Runtime threading and persistence
 
-Ledger and Raft state-machine transitions, plus inbound request handling, remain serialized on the main node event loop. The accepted socket is checked against global and per-address token buckets before handshake parsing. The per-address bucket map is bounded by `maximum_tracked_addresses`; idle entries expire after `address_idle_expiry`. `InboundAdmissionConfig` exposes global/per-address refill rates and burst sizes, and Raft mode reads it from `RaftNetworkConfig::inbound_admission`. Defaults are deliberately generous for a busy nine-member private cluster; operators should tune them to the expected source-IP topology. This admission gate limits connection/handshake work but does not make the event loop concurrent, protect upstream bandwidth, or constitute a full DDoS defense.
+The accept loop applies token-bucket admission and then queues accepted sockets. Bounded inbound workers handle handshake and request-frame I/O concurrently. Every operation that reads or mutates Ledger, Raft, trust-policy, or endpoint state is serialized by the per-node state mutex, while response bytes are written after releasing it. The per-address bucket map is bounded by `maximum_tracked_addresses`; idle entries expire after `address_idle_expiry`. `InboundAdmissionConfig` exposes global/per-address refill rates and burst sizes, and Raft mode reads it from `RaftNetworkConfig::inbound_admission`. Defaults are deliberately generous for a busy nine-member private cluster; operators should tune them to the expected source-IP topology. The admission gate and bounded worker queue limit local connection work but do not protect upstream bandwidth or constitute a full DDoS defense.
 
 Outbound Raft RPCs and transaction gossip use a fixed-size shared worker pool (default four, maximum eight), not one thread per peer. Each peer has separate bounded FIFO queues for Raft and gossip, one in-flight message per peer, and reserved capacity so gossip cannot consume the configured Raft queue budget. Raft messages receive priority, but an eight-message streak limit prevents permanent gossip starvation. Retries have independent capped exponential backoff. Retryable failures are requeued at the head of the same per-peer queue while the in-flight capacity reservation is retained; permanent transaction rejection is terminal. Stale heartbeat work can be coalesced or dropped under pressure.
 
@@ -90,4 +98,4 @@ The legacy authenticated `node-listen-auth`, `peer-status-auth`, `peer-sync-auth
 
 ## Remaining work and explicit limits
 
-Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket inbound connection admission and automatic best-effort transaction gossip, but neither is an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.
+Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket admission and automatic best-effort transaction gossip; v1.8.0 adds bounded concurrent inbound I/O while preserving serialized state access. These controls are not an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.

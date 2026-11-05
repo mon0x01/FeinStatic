@@ -93,6 +93,10 @@ struct InboundAdmissionConfig {
     std::size_t per_address_burst{2048};
     std::size_t maximum_tracked_addresses{4096};
     std::chrono::seconds address_idle_expiry{300};
+    // Socket handshakes and request frames are read by a bounded worker pool.
+    // Stateful Ledger/Raft request handling remains serialized on one writer.
+    std::size_t worker_count{4};
+    std::size_t maximum_queued_connections{64};
 };
 
 struct RaftNetworkConfig {
@@ -211,8 +215,9 @@ private:
     PeerAuthConfig auth_config_;
 };
 
-// Single-threaded server: one connection is processed at a time, keeping the
-// existing Ledger API's non-concurrent mutation model explicit and safe.
+// Bounded concurrent inbound I/O server. A fixed worker pool handles socket
+// handshakes and frame I/O; one state mutex serializes Ledger/Raft operations
+// and is released before response bytes are written to the remote peer.
 class NodeServer {
 public:
     NodeServer(ledger::Ledger& ledger,

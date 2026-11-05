@@ -967,6 +967,133 @@ FS_TEST(network_server_run_rejects_concurrent_entry) {
     remove_network_db(path);
 }
 
+FS_TEST(network_server_uses_bounded_workers_for_concurrent_inbound_handshakes) {
+    const auto path = network_test_db("inbound-workers");
+    const Wallet alice = Wallet::generate();
+    auto ledger = Ledger::initialize(path, {{alice.address(), 20 * kAtomsPerCoin}}, 0);
+
+    InboundAdmissionConfig admission;
+    admission.worker_count = 4;
+    admission.maximum_queued_connections = 8;
+    NodeServer server(ledger, "127.0.0.1", 0, std::chrono::milliseconds(600), admission);
+    std::thread worker([&] { server.run(); });
+
+    // Occupy three independent workers with clients that connect but never
+    // send the first handshake frame. These reads are bounded by the server
+    // timeout and must not block the accept loop or all other clients.
+    boost::asio::io_context stalled_io;
+    std::vector<std::unique_ptr<boost::asio::ip::tcp::socket>> stalled_clients;
+    for (int i = 0; i < 3; ++i) {
+        auto socket = std::make_unique<boost::asio::ip::tcp::socket>(stalled_io);
+        socket->connect({boost::asio::ip::make_address("127.0.0.1"), server.port()});
+        stalled_clients.push_back(std::move(socket));
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    bool status_succeeded = false;
+    std::chrono::steady_clock::duration elapsed{};
+    try {
+        PeerClient peer("127.0.0.1", server.port(), std::chrono::milliseconds(450));
+        const auto started = std::chrono::steady_clock::now();
+        const auto status = peer.status(ledger);
+        elapsed = std::chrono::steady_clock::now() - started;
+        status_succeeded = status.height == ledger.chain().height();
+    } catch (const std::exception&) {
+    }
+
+    for (auto& socket : stalled_clients) {
+        boost::system::error_code ignored;
+        socket->close(ignored);
+    }
+    server.stop();
+    worker.join();
+
+    FS_REQUIRE(status_succeeded);
+    FS_REQUIRE(elapsed < std::chrono::milliseconds(450));
+    remove_network_db(path);
+}
+
+FS_TEST(network_server_rejects_connections_when_bounded_queue_is_full_and_recovers) {
+    const auto path = network_test_db("inbound-queue-full");
+    const Wallet alice = Wallet::generate();
+    auto ledger = Ledger::initialize(path, {{alice.address(), 20 * kAtomsPerCoin}}, 0);
+
+    InboundAdmissionConfig admission;
+    admission.worker_count = 1;
+    admission.maximum_queued_connections = 1;
+    NodeServer server(ledger, "127.0.0.1", 0, std::chrono::milliseconds(1000), admission);
+    std::thread worker([&] { server.run(); });
+
+    boost::asio::io_context stalled_io;
+    boost::asio::ip::tcp::socket active(stalled_io);
+    boost::asio::ip::tcp::socket queued(stalled_io);
+    active.connect({boost::asio::ip::make_address("127.0.0.1"), server.port()});
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+    queued.connect({boost::asio::ip::make_address("127.0.0.1"), server.port()});
+    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+
+    bool overflow_connection_rejected = false;
+    try {
+        PeerClient overflow_peer("127.0.0.1", server.port(), std::chrono::milliseconds(400));
+        (void)overflow_peer.status(ledger);
+    } catch (const std::exception&) {
+        overflow_connection_rejected = true;
+    }
+
+    boost::system::error_code ignored;
+    active.close(ignored);
+    queued.close(ignored);
+    std::this_thread::sleep_for(std::chrono::milliseconds(60));
+
+    bool service_recovered = false;
+    try {
+        PeerClient recovered_peer("127.0.0.1", server.port(), std::chrono::milliseconds(1000));
+        const auto status = recovered_peer.status(ledger);
+        service_recovered = status.height == ledger.chain().height();
+    } catch (const std::exception&) {
+    }
+
+    server.stop();
+    worker.join();
+    FS_REQUIRE(overflow_connection_rejected);
+    FS_REQUIRE(service_recovered);
+    remove_network_db(path);
+}
+
+FS_TEST(network_server_handles_parallel_status_clients_without_concurrent_ledger_access) {
+    const auto path = network_test_db("parallel-status");
+    const Wallet alice = Wallet::generate();
+    auto ledger = Ledger::initialize(path, {{alice.address(), 20 * kAtomsPerCoin}}, 0);
+    InboundAdmissionConfig admission;
+    admission.worker_count = 4;
+    admission.maximum_queued_connections = 16;
+    NodeServer server(ledger, "127.0.0.1", 0, std::chrono::milliseconds(500), admission);
+    std::thread worker([&] { server.run(); });
+
+    constexpr std::size_t client_count = 12;
+    std::atomic_size_t successes{0};
+    std::vector<std::thread> clients;
+    clients.reserve(client_count);
+    for (std::size_t i = 0; i < client_count; ++i) {
+        clients.emplace_back([&] {
+            try {
+                PeerClient peer("127.0.0.1", server.port(), std::chrono::milliseconds(1500));
+                const auto status = peer.status(ledger);
+                if (status.height == ledger.chain().height()) {
+                    successes.fetch_add(1, std::memory_order_relaxed);
+                }
+            } catch (const std::exception&) {
+            }
+        });
+    }
+    for (auto& client : clients) client.join();
+    server.stop();
+    worker.join();
+
+    FS_REQUIRE(successes.load(std::memory_order_relaxed) == client_count);
+    remove_network_db(path);
+}
+
 FS_TEST(network_server_survives_bad_handshake_and_rejects_wrong_genesis_clearly) {
     const auto local_path = network_test_db("handshake-local");
     const auto remote_path = network_test_db("handshake-remote");

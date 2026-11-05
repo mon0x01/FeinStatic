@@ -1,4 +1,4 @@
-# Three-node Raft loopback lab (v1.7.0)
+# Three-node Raft loopback lab (v1.8.0)
 
 This procedure demonstrates the actual Raft-over-authenticated-TCP runtime on one machine. It is a development lab, not a public-network deployment guide.
 
@@ -126,6 +126,8 @@ The returned index is the Raft log index. It may be ahead of the Ledger height b
 Transactions are admitted to the addressed node's durable mempool and gossiped best-effort to enabled pre-provisioned members. Gossip is not consensus or finality; block inclusion still requires leader proposal and majority commitment. Direct block import and legacy chain synchronization are rejected in Raft mode, preventing those paths from bypassing consensus.
 
 ## Operating constraints
+
+- Inbound handshake/frame I/O is handled by a bounded worker pool (default four workers, maximum sixteen; default queue capacity 64, maximum 4096). Stateful Ledger/Raft operations remain serialized. Tune `InboundAdmissionConfig::worker_count` and `maximum_queued_connections` for the node's connection profile. Queue overflow closes the new connection; clients should retry with backoff.
 
 - Stable odd voter membership of 3, 5, 7, or 9 nodes; online voter changes use joint consensus within the pre-provisioned roster.
 - Crash-fault model only; no Byzantine fault tolerance.

@@ -874,15 +874,27 @@ struct RaftServerContext {
 
 void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
                       std::chrono::milliseconds timeout, const PeerAuthConfig* authentication,
-                      RaftServerContext* raft_context) {
+                      RaftServerContext* raft_context, std::mutex& state_mutex) {
     std::optional<FrameSecurity> session_security;
     try {
         socket.set_option(tcp::no_delay(true));
         const Frame hello = read_frame(socket, timeout);
         if (hello.type != kHello) throw std::runtime_error("first peer message must be a handshake");
-        const AuthenticatedClientHello client = validate_hello(hello.payload, ledger, authentication);
+        AuthenticatedClientHello client;
+        {
+            // Ledger and trust state have one writer. Handshake I/O and crypto
+            // can overlap across workers, but identity authorization and the
+            // chain-parameter read are kept inside the state boundary.
+            std::lock_guard state_lock(state_mutex);
+            client = validate_hello(hello.payload, ledger, authentication);
+        }
         if (authentication == nullptr) {
-            write_frame(socket, kHelloAck, status_payload(ledger), timeout);
+            Bytes status;
+            {
+                std::lock_guard state_lock(state_mutex);
+                status = status_payload(ledger);
+            }
+            write_frame(socket, kHelloAck, status, timeout);
         } else {
             auto ephemeral = crypto::generate_x25519_keypair();
             EphemeralKeyWiper ephemeral_wiper{ephemeral};
@@ -905,8 +917,12 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             }
             AuthenticatedServerChallenge server{server_id, authentication->identity->public_key(),
                                                   server_nonce, ephemeral.public_key};
-            write_frame(socket, kHelloAck,
-                        hello_ack_payload(ledger, *authentication, client, server), timeout);
+            Bytes acknowledgement;
+            {
+                std::lock_guard state_lock(state_mutex);
+                acknowledgement = hello_ack_payload(ledger, *authentication, client, server);
+            }
+            write_frame(socket, kHelloAck, acknowledgement, timeout);
             session_security.emplace(make_frame_security(authentication->identity.get(), client.public_key,
                 ephemeral.secret_key, client.ephemeral_public_key, client.core, client.peer_id,
                 server.peer_id, client.nonce, server_nonce, client.ephemeral_public_key,
@@ -914,9 +930,16 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             OPENSSL_cleanse(ephemeral.secret_key.data(), ephemeral.secret_key.size());
         }
         const Frame request = read_frame(socket, timeout, session_security ? &*session_security : nullptr);
+        // All protocol operations that inspect or mutate Ledger, Raft,
+        // endpoint, or trust state run on this single-writer critical section.
+        // Network acceptance, handshake reads, and cryptographic challenge
+        // work remain concurrent and independently time-bounded.
+        std::unique_lock state_lock(state_mutex);
         if (request.type == kStatus) {
             require_empty(ByteReader(request.payload), "status request must be empty");
-            write_frame(socket, kStatusResult, status_payload(ledger), timeout, session_security ? &*session_security : nullptr);
+            const Bytes response = status_payload(ledger);
+            state_lock.unlock();
+            write_frame(socket, kStatusResult, response, timeout, session_security ? &*session_security : nullptr);
             return;
         }
         if (request.type == kSubmitTransaction) {
@@ -932,6 +955,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             ByteWriter response;
             response.u8(accepted ? 1 : 0);
             response.string(accepted ? std::string{} : error.substr(0, kMaximumErrorBytes));
+            state_lock.unlock();
             write_frame(socket, kSubmitTransactionResult, response.data(), timeout, session_security ? &*session_security : nullptr);
             return;
         }
@@ -946,6 +970,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             ledger.accept_blocks({block});
             ByteWriter response;
             response.u8(1);
+            state_lock.unlock();
             write_frame(socket, kSubmitBlockResult, response.data(), timeout, session_security ? &*session_security : nullptr);
             return;
         }
@@ -978,6 +1003,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             ByteWriter response;
             response.u64(common->first);
             response.fixed(common->second);
+            state_lock.unlock();
             write_frame(socket, kCommonAncestorResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1025,6 +1051,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             ByteWriter response;
             response.u32(static_cast<std::uint32_t>(encoded_blocks.size()));
             for (const auto& encoded : encoded_blocks) response.blob(encoded);
+            state_lock.unlock();
             write_frame(socket, kBlocksResult, response.data(), timeout, session_security ? &*session_security : nullptr);
             return;
         }
@@ -1045,6 +1072,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
                 throw std::runtime_error("Raft RPC identity does not match the authenticated connection or local node");
             }
             raft_context->enqueue(raft_context->adapter->receive(message, client.peer_id));
+            state_lock.unlock();
             write_frame(socket, kRaftMessageResult, {}, timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1070,6 +1098,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             response.u64(proposal.index);
             response.u64(proposal.term);
             response.fixed(proposal.block_hash);
+            state_lock.unlock();
             write_frame(socket, kRaftProposeBlockResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1101,6 +1130,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             response.u64(state.commit_index);
             response.u64(state.log.empty() ? state.snapshot_index : state.log.back().index);
             response.u64(state.current_term);
+            state_lock.unlock();
             write_frame(socket, kRaftChangeMembershipResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1138,6 +1168,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
                 response.u64(peer.retry_delay_ms);
                 response.string(peer.last_error.substr(0, 256));
             }
+            state_lock.unlock();
             write_frame(socket, kRaftPeerHealthResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1167,6 +1198,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             response.string(result.host);
             response.u32(result.port);
             response.u8(result.enabled ? 1U : 0U);
+            state_lock.unlock();
             write_frame(socket, kRaftUpdatePeerEndpointResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1190,6 +1222,7 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             response.u64(result.policy_epoch);
             response.u32(static_cast<std::uint32_t>(result.active_peers));
             response.u32(static_cast<std::uint32_t>(result.total_entries));
+            state_lock.unlock();
             write_frame(socket, kRaftApplyTrustPolicyResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
@@ -1222,12 +1255,12 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             write_members(membership.voters());
             write_members(membership.learners());
             write_members(membership.new_voters());
+            state_lock.unlock();
             write_frame(socket, kRaftStatusResult, response.data(), timeout,
                         session_security ? &*session_security : nullptr);
             return;
         }
-        throw std::runtime_error("unsupported peer request message type");
-    } catch (const std::exception& exception) {
+        throw std::runtime_error("unsupported peer request message type");    } catch (const std::exception& exception) {
         send_error(socket, exception.what(), timeout, session_security ? &*session_security : nullptr);
     }
 }
@@ -1690,6 +1723,14 @@ bool PeerClient::send_gossip_transaction(const PeerChainParameters& parameters,
 }
 
 struct NodeServer::Impl {
+    struct InboundConnection {
+        tcp::socket::native_handle_type native_socket{-1};
+        tcp protocol{tcp::v4()};
+        InboundConnection() = default;
+        InboundConnection(tcp::socket::native_handle_type native, tcp value)
+            : native_socket(native), protocol(value) {}
+    };
+
     struct OutboundMessage {
         enum class Kind : std::uint8_t { Raft, Transaction };
         Kind kind{Kind::Raft};
@@ -1849,16 +1890,157 @@ struct NodeServer::Impl {
         }
     }
 
-    ~Impl() { stop_dispatcher(); }
+    ~Impl() {
+        stop_inbound_workers();
+        stop_dispatcher();
+    }
 
     static void validate_inbound_admission_config(const InboundAdmissionConfig& config) {
         if (!std::isfinite(config.global_refill_per_second) || config.global_refill_per_second <= 0.0 ||
             !std::isfinite(config.per_address_refill_per_second) || config.per_address_refill_per_second <= 0.0 ||
             config.global_burst == 0 || config.per_address_burst == 0 ||
             config.maximum_tracked_addresses == 0 ||
-            config.address_idle_expiry <= std::chrono::seconds::zero()) {
+            config.address_idle_expiry <= std::chrono::seconds::zero() ||
+            config.worker_count == 0 || config.worker_count > 16 ||
+            config.maximum_queued_connections == 0 || config.maximum_queued_connections > 4096) {
             throw std::invalid_argument("inbound admission limits must be finite and strictly positive");
         }
+    }
+
+    [[nodiscard]] std::optional<RaftServerContext> make_raft_server_context() {
+        if (!raft_adapter) return std::nullopt;
+        RaftServerContext context;
+        context.adapter = raft_adapter.get();
+        context.members = &raft_members;
+        context.local_peer_id = local_peer_id;
+        context.enqueue = [this](std::vector<consensus::RaftMessage> messages) {
+            enqueue_raft_messages(messages);
+        };
+        context.enqueue_transaction = [this](const ledger::Transaction& transaction,
+                                              const std::string& source_peer) {
+            enqueue_transaction(transaction, source_peer);
+        };
+        context.apply_trust_policy = [this](const std::string& signer_peer_id, const Bytes& bundle) {
+            if (!authentication.has_value() || !raft_configuration.has_value() ||
+                raft_configuration->trust_store_path.empty()) {
+                throw std::runtime_error("Raft node has no configured trust-store path for policy persistence");
+            }
+            std::lock_guard trust_lock(trust_store_mutex);
+            PeerTrustStore updated = authentication->trusted_peers;
+            updated.apply_signed_policy(bundle, raft_configuration->consensus.cluster_id, signer_peer_id);
+            for (const auto& member_id : raft_members) {
+                if (member_id != local_peer_id && !updated.trusts(member_id)) {
+                    throw std::runtime_error("trust policy would revoke a pre-provisioned Raft member; complete membership removal before revocation");
+                }
+            }
+            updated.save_atomic(raft_configuration->trust_store_path);
+            authentication->trusted_peers = std::move(updated);
+            return TrustPolicyApplyResult{
+                authentication->trusted_peers.policy_epoch(),
+                authentication->trusted_peers.active_size(),
+                authentication->trusted_peers.size()};
+        };
+        context.peer_health = [this] { return peer_health_report(); };
+        context.update_endpoint = [this](const std::string& peer_id, const std::string& host,
+                                         std::uint16_t port, bool enabled) {
+            return update_peer_endpoint(peer_id, host, port, enabled);
+        };
+        return context;
+    }
+
+    void process_inbound_socket(tcp::socket& socket) noexcept {
+        try {
+            auto raft_context = make_raft_server_context();
+            serve_connection(socket, ledger, timeout,
+                             authentication ? &*authentication : nullptr,
+                             raft_context ? &*raft_context : nullptr, state_mutex);
+        } catch (...) {
+            // A failed connection is isolated to that worker. serve_connection
+            // reports protocol failures to the remote peer when possible.
+        }
+        ErrorCode ignored;
+        socket.shutdown(tcp::socket::shutdown_both, ignored);
+        socket.close(ignored);
+    }
+
+    void inbound_worker_loop() noexcept {
+        // Each worker owns one io_context. Accepted native handles are assigned
+        // to that context only after dequeue, so timed_operation() can safely
+        // restart/run the context without racing other workers.
+        boost::asio::io_context worker_io;
+        for (;;) {
+            std::optional<InboundConnection> connection;
+            {
+                std::unique_lock queue_lock(inbound_queue_mutex);
+                inbound_condition.wait(queue_lock, [this] {
+                    return inbound_stopping || !inbound_queue.empty();
+                });
+                if (inbound_stopping && inbound_queue.empty()) return;
+                connection.emplace(std::move(inbound_queue.front()));
+                inbound_queue.pop_front();
+            }
+            tcp::socket socket(worker_io);
+            ErrorCode assign_error;
+            socket.assign(connection->protocol, connection->native_socket, assign_error);
+            if (assign_error) {
+                (void)::close(connection->native_socket);
+                continue;
+            }
+            process_inbound_socket(socket);
+        }
+    }
+
+    void start_inbound_workers() {
+        std::lock_guard lifecycle_lock(inbound_lifecycle_mutex);
+        if (inbound_stopping) return;
+        if (!inbound_workers.empty()) return;
+        try {
+            inbound_workers.reserve(inbound_admission.worker_count);
+            for (std::size_t i = 0; i < inbound_admission.worker_count; ++i) {
+                inbound_workers.emplace_back([this] { inbound_worker_loop(); });
+            }
+        } catch (...) {
+            {
+                std::lock_guard queue_lock(inbound_queue_mutex);
+                inbound_stopping = true;
+            }
+            inbound_condition.notify_all();
+            for (auto& worker : inbound_workers) {
+                if (worker.joinable()) worker.join();
+            }
+            inbound_workers.clear();
+            throw;
+        }
+    }
+
+    [[nodiscard]] bool enqueue_inbound_socket(InboundConnection connection) {
+        {
+            std::lock_guard queue_lock(inbound_queue_mutex);
+            if (inbound_stopping || inbound_queue.size() >= inbound_admission.maximum_queued_connections) {
+                (void)::close(connection.native_socket);
+                return false;
+            }
+            inbound_queue.emplace_back(connection);
+        }
+        inbound_condition.notify_one();
+        return true;
+    }
+
+    void stop_inbound_workers() noexcept {
+        std::lock_guard lifecycle_lock(inbound_lifecycle_mutex);
+        {
+            std::lock_guard queue_lock(inbound_queue_mutex);
+            inbound_stopping = true;
+            for (auto& connection : inbound_queue) {
+                (void)::close(connection.native_socket);
+            }
+            inbound_queue.clear();
+        }
+        inbound_condition.notify_all();
+        for (auto& worker : inbound_workers) {
+            if (worker.joinable()) worker.join();
+        }
+        inbound_workers.clear();
     }
 
     bool admit_connection(const tcp::socket& socket) {
@@ -2443,6 +2625,9 @@ struct NodeServer::Impl {
     std::optional<RaftNetworkConfig> raft_configuration;
     InboundAdmissionConfig inbound_admission;
     std::mutex admission_mutex;
+    // Network I/O is allowed to overlap, but every operation touching Ledger,
+    // Raft adapter, and the mutable trust policy is serialized here.
+    std::mutex state_mutex;
     double global_inbound_tokens{0.0};
     std::chrono::steady_clock::time_point global_inbound_updated{std::chrono::steady_clock::now()};
     std::map<std::string, InboundTokenBucket> inbound_address_buckets;
@@ -2476,6 +2661,12 @@ struct NodeServer::Impl {
     std::vector<std::thread> dispatchers;
     boost::asio::io_context io;
     tcp::acceptor acceptor;
+    std::mutex inbound_lifecycle_mutex;
+    std::mutex inbound_queue_mutex;
+    std::condition_variable inbound_condition;
+    std::deque<InboundConnection> inbound_queue;
+    std::vector<std::thread> inbound_workers;
+    bool inbound_stopping{false};
     std::uint16_t bound_port{0};
     enum class RunState : std::uint8_t { Created, Running, StopRequested, Stopped };
     std::atomic<RunState> run_state{RunState::Created};
@@ -2516,70 +2707,38 @@ std::uint16_t NodeServer::port() const noexcept { return impl_->bound_port; }
 
 void NodeServer::serve_one() {
     impl_->start_dispatcher();
-    impl_->pump_pending_gossip_if_due();
-    tcp::socket socket(impl_->io);
+    impl_->start_inbound_workers();
+    {
+        std::lock_guard state_lock(impl_->state_mutex);
+        impl_->pump_pending_gossip_if_due();
+    }
+    // Accept on the listener's io_context first. Rebind the native descriptor
+    // into a per-connection context only after accept completes; accepting
+    // directly into a socket owned by another io_context is not portable.
+    tcp::socket accepted_socket(impl_->io);
     ErrorCode error;
-    impl_->acceptor.accept(socket, error);
+    impl_->acceptor.accept(accepted_socket, error);
     if (error == boost::asio::error::would_block || error == boost::asio::error::try_again) return;
     if (error) throw boost::system::system_error(error, "accept peer connection");
-    if (!impl_->admit_connection(socket)) {
+    if (!impl_->admit_connection(accepted_socket)) {
         ErrorCode ignored;
-        socket.shutdown(tcp::socket::shutdown_both, ignored);
-        socket.close(ignored);
+        accepted_socket.shutdown(tcp::socket::shutdown_both, ignored);
+        accepted_socket.close(ignored);
         return;
     }
-    std::optional<RaftServerContext> raft_context;
-    if (impl_->raft_adapter) {
-        raft_context.emplace();
-        raft_context->adapter = impl_->raft_adapter.get();
-        raft_context->members = &impl_->raft_members;
-        raft_context->local_peer_id = impl_->local_peer_id;
-        raft_context->enqueue = [implementation = impl_.get()](std::vector<consensus::RaftMessage> messages) {
-            implementation->enqueue_raft_messages(messages);
-        };
-        raft_context->enqueue_transaction = [implementation = impl_.get()](
-            const ledger::Transaction& transaction, const std::string& source_peer) {
-            implementation->enqueue_transaction(transaction, source_peer);
-        };
-        raft_context->apply_trust_policy = [implementation = impl_.get()](
-            const std::string& signer_peer_id, const Bytes& bundle) {
-            if (!implementation->authentication.has_value() ||
-                !implementation->raft_configuration.has_value() ||
-                implementation->raft_configuration->trust_store_path.empty()) {
-                throw std::runtime_error("Raft node has no configured trust-store path for policy persistence");
-            }
-            std::lock_guard trust_lock(implementation->trust_store_mutex);
-            PeerTrustStore updated = implementation->authentication->trusted_peers;
-            updated.apply_signed_policy(bundle,
-                implementation->raft_configuration->consensus.cluster_id, signer_peer_id);
-            // A trust-policy rollout must not silently sever an endpoint that
-            // remains in the pre-provisioned Raft transport roster. Membership
-            // removal and trust revocation are separate ordered operations.
-            for (const auto& member_id : implementation->raft_members) {
-                // The local node's own identity is not an inbound trust entry.
-                // Every remote pre-provisioned endpoint must remain trusted.
-                if (member_id != implementation->local_peer_id && !updated.trusts(member_id)) {
-                    throw std::runtime_error("trust policy would revoke a pre-provisioned Raft member; complete membership removal before revocation");
-                }
-            }
-            updated.save_atomic(implementation->raft_configuration->trust_store_path);
-            implementation->authentication->trusted_peers = std::move(updated);
-            return TrustPolicyApplyResult{
-                implementation->authentication->trusted_peers.policy_epoch(),
-                implementation->authentication->trusted_peers.active_size(),
-                implementation->authentication->trusted_peers.size()};
-        };
-        raft_context->peer_health = [implementation = impl_.get()] {
-            return implementation->peer_health_report();
-        };
-        raft_context->update_endpoint = [implementation = impl_.get()](
-            const std::string& peer_id, const std::string& host, std::uint16_t port, bool enabled) {
-            return implementation->update_peer_endpoint(peer_id, host, port, enabled);
-        };
+    const auto protocol = accepted_socket.local_endpoint(error).protocol();
+    if (error) {
+        accepted_socket.close(error);
+        return;
     }
-    serve_connection(socket, impl_->ledger, impl_->timeout,
-                     impl_->authentication ? &*impl_->authentication : nullptr,
-                     raft_context ? &*raft_context : nullptr);
+    const auto native_socket = accepted_socket.release(error);
+    if (error) throw boost::system::system_error(error, "release accepted peer socket");
+    if (!impl_->enqueue_inbound_socket(Impl::InboundConnection{native_socket, protocol})) {
+        // The bounded queue is deliberately fail-fast. A peer must retry
+        // rather than allowing inbound sockets to accumulate without limit.
+        // Admission tokens are not refunded: repeated saturation is load.
+        return;
+    }
 }
 
 void NodeServer::run(const volatile std::sig_atomic_t* external_stop) {
@@ -2609,6 +2768,7 @@ void NodeServer::run(const volatile std::sig_atomic_t* external_stop) {
                 auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - previous_tick);
                 if (elapsed <= std::chrono::milliseconds::zero()) elapsed = std::chrono::milliseconds(1);
                 previous_tick = now;
+                std::lock_guard state_lock(impl_->state_mutex);
                 impl_->enqueue_raft_messages(impl_->raft_adapter->tick(elapsed));
             }
             serve_one();
@@ -2619,10 +2779,12 @@ void NodeServer::run(const volatile std::sig_atomic_t* external_stop) {
         }
     } catch (...) {
         impl_->run_state.store(RunState::Stopped, std::memory_order_release);
+        impl_->stop_inbound_workers();
         impl_->stop_dispatcher();
         throw;
     }
     impl_->run_state.store(RunState::Stopped, std::memory_order_release);
+    impl_->stop_inbound_workers();
     impl_->stop_dispatcher();
 }
 
@@ -2636,6 +2798,7 @@ void NodeServer::stop() noexcept {
             break;
         }
     }
+    impl_->stop_inbound_workers();
     impl_->stop_dispatcher();
 }
 

@@ -2,7 +2,16 @@
 
 **FeinStatic** is a modular C++20 financial-infrastructure and distributed-systems prototype. It combines a private native-asset Ledger, an off-chain order-matching engine, an automated market maker, shared settlement, a Ledger/settlement bridge, authenticated peer networking, and a crash-fault Raft cluster with snapshot recovery and joint-consensus voter changes.
 
-Release: **1.7.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+Release: **1.8.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+
+## Version 1.8.0 changes
+
+- Replaces synchronous one-connection-at-a-time handling with a bounded inbound socket worker pool (default four workers, maximum sixteen) and a bounded pending-connection queue (default 64, maximum 4096).
+- Keeps the accept loop lightweight; independent workers perform bounded handshake and frame I/O using worker-owned Asio contexts.
+- Serializes every Ledger, Raft, trust-policy, and endpoint state operation behind one per-node state mutex. Response frames are prepared while the state is protected, then written after releasing the mutex so a slow remote reader cannot hold the state boundary.
+- Rejects new accepted sockets when the worker queue is full instead of allowing unbounded connection accumulation. Existing global/per-address token-bucket admission remains in front of the queue.
+- Adds real TCP tests for multiple stalled handshakes while a fourth worker continues serving, twelve parallel status clients, queue saturation/recovery, and the concurrent-run lifecycle regression.
+- Keeps authenticated wire protocol v8 and SQLite schema unchanged. All members continue to use independent SQLite databases.
 
 ## Version 1.7.0 changes
 
@@ -118,7 +127,7 @@ Important: this is deterministic local fork choice, not distributed consensus. T
 - Adds `node-keygen`, `peer-trust-add`, and authenticated node status/sync/transaction/block relay commands.
 - Adds loopback integration tests for authenticated status, transaction relay, block synchronization, untrusted-client rejection, server identity pinning, plaintext-client rejection, identity-file permissions, trust-store validation, and cross-session frame replay resistance.
 
-At v0.7.0, authenticated frames were signed, bound to fresh session nonces, and replay-protected, but **not encrypted**. v1.0.0 subsequently integrated Raft RPCs with authenticated TCP; v1.2.0 added log compaction/snapshot recovery; v1.3.0 added joint-consensus voter changes; v1.4.0 added encrypted application frames and operator roles; v1.5.0 added encrypted identity vaults and signed remote trust-policy pushes; v1.6.0 added a durable endpoint registry and bounded shared outbound worker pool. Current limitations include crash-fault-only consensus, pre-provisioned peer-ID rosters, one serialized inbound event loop, no TLS interoperability, no automatic peer discovery, and no production finality. Do not expose nodes to untrusted networks.
+At v0.7.0, authenticated frames were signed, bound to fresh session nonces, and replay-protected, but **not encrypted**. v1.0.0 subsequently integrated Raft RPCs with authenticated TCP; v1.2.0 added log compaction/snapshot recovery; v1.3.0 added joint-consensus voter changes; v1.4.0 added encrypted application frames and operator roles; v1.5.0 added encrypted identity vaults and signed remote trust-policy pushes; v1.6.0 added a durable endpoint registry and bounded shared outbound worker pool. Current limitations include crash-fault-only consensus, pre-provisioned peer-ID rosters, bounded inbound I/O workers with serialized state access, no TLS interoperability, no automatic peer discovery, and no production finality. Do not expose nodes to untrusted networks.
 
 ## Two-node authenticated lab quick start
 

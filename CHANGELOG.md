@@ -1,3 +1,12 @@
+## 1.8.0
+
+- Add a fixed-size inbound socket worker pool (default four, maximum sixteen) and bounded pending-connection queue (default 64, maximum 4096).
+- Keep the accept loop non-blocking with respect to peer handshakes and request reads; each worker owns its Asio execution context and processes one accepted connection at a time.
+- Serialize all Ledger, Raft, trust-policy, and endpoint state access under a per-node mutex. Construct response frames while protected, then release the mutex before network writes so slow readers do not hold the state lock.
+- Fail closed on inbound queue saturation by closing newly accepted sockets. Existing global/per-address token-bucket admission is applied before queueing.
+- Add integration coverage for concurrent stalled handshakes, twelve parallel status clients, bounded queue saturation/recovery, and lifecycle regression.
+- Keep authenticated protocol v8 and SQLite schema unchanged.
+
 ## 1.7.0
 
 - Upgrade the authenticated peer wire protocol to v8 so all peers explicitly negotiate the new networking behavior together; no SQLite schema migration is introduced.
