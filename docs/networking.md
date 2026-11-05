@@ -1,0 +1,89 @@
+# FeinStatic peer networking (v1.6.0)
+
+## Scope
+
+The TCP peer layer provides bounded request/response framing, chain-parameter compatibility checks, transaction relay, legacy block relay/synchronization, and authenticated peer identities. v1.0.0 adds live Raft RPC dispatch and replicated Ledger block application for a fixed permissioned crash-fault cluster. The Raft cluster path is described in detail in [`raft.md`](raft.md) and the three-node lab procedure in [`raft-networking-guide.md`](raft-networking-guide.md).
+
+The legacy non-Raft peer mode remains available for development, but uses deterministic local fork choice rather than distributed consensus. In Raft mode, direct block import and pull-based chain synchronization are disabled to prevent bypassing the replicated log.
+
+## Node identity and trust
+
+A node identity is independent from customer Ledger wallets. Generate one identity per node:
+
+```bash
+build/release/feinstatic node-keygen-vault runtime/node-a.vault
+```
+
+The command prompts twice for a passphrase without echoing it. The vault stores a 32-byte Ed25519 seed encrypted with PBKDF2-HMAC-SHA-256 and AES-256-GCM. It is created with mode `0600`, must be owned by the current user, and uses a bounded KDF work factor. The node ID is derived from the public key. Share only the printed node ID and public key; never share the vault or passphrase. Existing raw `node-keygen` 0600 identity files remain readable for compatibility; new deployments should use vaults. The private seed exists in process memory while the vault is unlocked, so this is not hardware-backed key custody.
+
+The text trust store is an explicit allow-list. New rows use `<peer-id> <public-key-hex> <peer|operator|revoked-peer|revoked-operator>`; legacy two-column rows load as ordinary `peer` identities. Add a remote peer:
+
+```bash
+build/release/feinstatic peer-trust-add runtime/trusted-peers.txt \
+  <REMOTE_NODE_ID> <REMOTE_64_BYTE_HEX_PUBLIC_KEY> peer
+```
+
+The CLI verifies that the supplied node ID is derived from the supplied public key. Trust stores are bounded. A server accepts only clients present in its local trust store. A client pins the expected remote peer ID and checks it against its trusted public key. The `identity.key` placeholder in older examples may be a legacy raw file or an encrypted `.vault`; the loader detects the format.
+
+Trust is bilateral: A must trust B for A to accept B's requests, and B must trust A for B to accept A's requests. There is no automatic peer discovery or certificate authority. v1.5.0 adds signed trust-policy replication to one already-provisioned node at a time. v1.6.0 adds live host/port and enabled-state management for those pre-provisioned peers, but does not discover or add peer IDs.
+
+## Authenticated handshake and session frames
+
+Authenticated protocol v7 uses mutual Ed25519 challenge-response with fresh nonces and chain-parameter binding. Both peers exchange ephemeral X25519 public keys, sign those keys into the handshake transcript, and derive independent directional AES-256-GCM keys with HKDF-SHA-256. Every post-handshake frame is encrypted; its session binding, type, and monotonically increasing sequence number are AEAD associated data, and its ciphertext retains an Ed25519 signature. Receivers reject invalid signatures, AEAD tags, repeated sequence numbers, gaps, and out-of-order frames.
+
+This is application-layer encryption, not TLS. It does not hide IP/port, packet-size, or timing metadata and has not received an independent cryptographic audit. Use controlled private networks only. Membership administration and trust-policy installation are restricted to active `operator` identities. `peer-trust-revoke` records a local revocation tombstone; `peer-trust-rotate` replaces an identity while retaining its role.
+
+### Encrypted identity vaults
+
+`node-keygen-vault runtime/node-a.vault` generates an Ed25519 node identity and encrypts its private seed at rest. Existing node commands detect the vault format and prompt for its passphrase through a hidden terminal input. Keep an offline backup of the vault and passphrase separately. Losing either means losing the node identity; vault encryption does not protect a key while the process is running or from a compromised host.
+
+### Signed trust-policy push
+
+`raft-trust-policy-push db host port operator.vault management-trust.txt expected-peer-id cluster-id epoch` sends a complete signed trust policy to one existing Raft node. The management trust file must contain the target node's public key (for the client-side pinned connection), the signing identity as an active `operator`, and the complete desired set of trusted node/operator identities for the target. Use a new positive epoch greater than the management file's stored policy epoch. The remote node verifies the encrypted authenticated session, active operator identity, signature, cluster ID, and strictly increasing epoch, then writes its trust store before acknowledging. The management file advances its own epoch only after that acknowledgement.
+
+Policies preserve local revocation tombstones and cannot remove the last active operator. A target also refuses a policy that revokes any remote endpoint still present in its pre-provisioned Raft roster; complete the Raft membership/endpoint removal first. Push the policy separately to each intended node. Existing sessions are not forcibly disconnected, so a revoked identity is rejected on its next handshake, not retroactively removed from an established connection. Policy updates do not automatically propagate to other nodes.
+
+The legacy unauthenticated `node-listen` listener is restricted to loopback. Remote binds require `node-listen-auth` or the Raft-enabled `raft-node` command with explicit trust configuration.
+
+## Protocol and bounds
+
+Wire protocol version 7 retains the bounded framing and adds Raft RPC, Raft status with membership metadata, block-proposal, and joint-consensus membership-change request/response messages. A frame includes the `FSN1` magic, wire version, message type, bounded payload length, sequence metadata, SHA-256 payload checksum, Ed25519 signature (zero only for pre-authentication handshake frames), and payload. The maximum frame payload is 16 MiB. Transaction and block serializers enforce their own smaller bounds. Network operations are time-bounded.
+
+Raft RPCs use the same authenticated session framing. A member accepts a Raft message only when the authenticated transport peer ID equals `message.from`, `message.to` equals the local member ID, and the sender belongs to the configured voter/learner roster. Learners may send append/snapshot acknowledgements but cannot vote or campaign.
+
+## Raft-enabled runtime
+
+Start a static cluster member with:
+
+```bash
+build/release/feinstatic raft-node db address port identity.key trust.txt cluster-id members.txt
+```
+
+The members file has one `<peer-id> <host> <port> [voter|learner]` row per cluster member, including the local node. Every node uses the same cluster ID and peer IDs. The local node's line must match the listener port. Each node's local trust store contains every other member's public key. v1.6.0 persists the remote host/port/enabled state in `<database>.endpoints`; the registry is initialized from this file and then becomes the live endpoint source. Peer IDs and voter/learner roster membership remain pre-provisioned and are not changed by endpoint RPCs. The full procedure is in [`raft-networking-guide.md`](raft-networking-guide.md).
+
+Status and proposals use authenticated client commands:
+
+```bash
+build/release/feinstatic raft-status-auth db host port identity.key trust.txt expected-peer-id
+build/release/feinstatic raft-propose-block-auth db host port identity.key trust.txt expected-peer-id miner-address
+```
+
+Only a ready Raft leader accepts a block proposal. The result reports an accepted Raft log index; it does not guarantee commitment. Query members until the commit and applied indices converge. Remember that no-op entries consume Raft indices without creating Ledger blocks.
+
+Transactions are admitted to the addressed member's local durable mempool by the existing `peer-submit-tx-auth` command. Transaction gossip is not automatic; send transactions to the current leader before requesting a block proposal.
+
+## Runtime threading and persistence
+
+Ledger and Raft state-machine transitions, plus inbound request handling, are serialized on the main node event loop. Outbound Raft RPCs use a fixed-size shared worker pool (default four, maximum eight), not one thread per peer. Scheduling permits one in-flight request per peer, preserving that peer's FIFO order while workers serve other peers. Global and per-peer queues are bounded; stale heartbeat work may be coalesced or dropped under pressure, and failures use capped exponential retry backoff. These controls bound outbound resource use; they do not provide inbound connection concurrency or a general DoS admission-control layer.
+
+Committed block application persists the Ledger block append, durable mempool reconciliation, and Raft `last_applied` snapshot in one SQLite transaction. In-memory state is published only after commit. On restart, the adapter verifies the persisted applied log against the recovered Ledger chain.
+
+Each node must use its own SQLite database. Do not open one database from multiple writable processes. Every member must start from the same exact checkpoint and the same pre-provisioned voter/learner roster. The initial roster can contain at most nine total identities; later voter sets are committed through joint consensus without discovering new endpoints or trust entries.
+
+## Legacy non-Raft peer mode
+
+The legacy authenticated `node-listen-auth`, `peer-status-auth`, `peer-sync-auth`, `peer-submit-tx-auth`, and `peer-relay-tip-auth` commands remain available for development. The older unauthenticated listener and peer commands are restricted to loopback. Non-Raft sync uses candidate-first validation, fixed-difficulty fork choice and atomic reorganization; that policy is not distributed consensus.
+
+## Remaining work and explicit limits
+
+Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 can explicitly push a signed trust policy to one already-provisioned node at a time; it does not automatically broadcast to the cluster. It does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, rate limiting, or production finality. Protocol v7 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.

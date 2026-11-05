@@ -1,0 +1,14 @@
+/build/
+/cmake-build-*/
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.tmp
+*.swp
+.idea/
+.vscode/
+compile_commands.json
+
+__pycache__/
+*.py[cod]
