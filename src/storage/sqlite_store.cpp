@@ -157,8 +157,8 @@ void SqliteStore::initialize_schema() {
     const int step = sqlite3_step(version_query.get());
     check_sqlite(step, db_, "read schema version");
     const int version = sqlite3_column_int(version_query.get(), 0);
-    if (version > 5) throw std::runtime_error("database schema is newer than this FeinStatic build");
-    if (version == 5) return;
+    if (version > 6) throw std::runtime_error("database schema is newer than this FeinStatic build");
+    if (version == 6) return;
 
     SqlTransaction transaction(db_);
     if (version == 0) {
@@ -178,7 +178,8 @@ void SqliteStore::initialize_schema() {
     }
     // Version 1 -> 2 adds the shared financial snapshot. Version 2 -> 3 adds
     // the durable mempool. Version 3 -> 4 adds the independent Raft consensus
-    // snapshot. Version 5 adds durable, versioned Raft application snapshots.
+    // snapshot; version 5 adds completed application snapshots; version 6 adds
+    // crash-resumable incoming snapshot staging.
     execute(db_,
         "CREATE TABLE IF NOT EXISTS financial_state ("
         "singleton INTEGER PRIMARY KEY CHECK(singleton = 1),"
@@ -198,8 +199,20 @@ void SqliteStore::initialize_schema() {
         "CREATE TABLE IF NOT EXISTS raft_snapshots ("
         "snapshot_index INTEGER PRIMARY KEY CHECK(snapshot_index > 0),"
         "checksum BLOB NOT NULL CHECK(length(checksum) = 32),"
-        "payload BLOB NOT NULL CHECK(length(payload) > 0 AND length(payload) <= 67108864));");
-    execute(db_, "PRAGMA user_version = 5;");
+        "payload BLOB NOT NULL CHECK(length(payload) > 0 AND length(payload) <= 67108864));"
+        "CREATE TABLE IF NOT EXISTS raft_snapshot_staging ("
+        "singleton INTEGER PRIMARY KEY CHECK(singleton = 1),"
+        "source_id TEXT NOT NULL CHECK(length(source_id) BETWEEN 1 AND 128),"
+        "snapshot_index INTEGER NOT NULL CHECK(snapshot_index > 0),"
+        "snapshot_term INTEGER NOT NULL CHECK(snapshot_term > 0),"
+        "total_size INTEGER NOT NULL CHECK(total_size > 0 AND total_size <= 67108864),"
+        "checksum BLOB NOT NULL CHECK(length(checksum) = 32),"
+        "membership BLOB NOT NULL CHECK(length(membership) <= 8192),"
+        "next_offset INTEGER NOT NULL CHECK(next_offset >= 0 AND next_offset <= total_size));"
+        "CREATE TABLE IF NOT EXISTS raft_snapshot_staging_chunks ("
+        "chunk_offset INTEGER PRIMARY KEY CHECK(chunk_offset >= 0),"
+        "payload BLOB NOT NULL CHECK(length(payload) > 0 AND length(payload) <= 524288));");
+    execute(db_, "PRAGMA user_version = 6;");
     transaction.commit();
     restrict_file_permissions();
 }
@@ -862,6 +875,162 @@ void SqliteStore::prune_raft_snapshots_before(std::uint64_t snapshot_index) {
     check_sqlite(sqlite3_bind_int64(remove.get(), 1, static_cast<sqlite3_int64>(snapshot_index)),
                  db_, "bind Raft snapshot pruning index");
     remove.step_done();
+    transaction.commit();
+    restrict_file_permissions();
+}
+
+std::optional<consensus::RaftSnapshotTransfer> SqliteStore::load_raft_snapshot_staging() const {
+    Statement metadata(db_,
+        "SELECT source_id, snapshot_index, snapshot_term, total_size, checksum, membership, next_offset "
+        "FROM raft_snapshot_staging WHERE singleton=1;");
+    const int step = sqlite3_step(metadata.get());
+    if (step == SQLITE_DONE) return std::nullopt;
+    check_sqlite(step, db_, "load Raft snapshot staging metadata");
+
+    consensus::RaftSnapshotTransfer transfer;
+    const auto* source = reinterpret_cast<const char*>(sqlite3_column_text(metadata.get(), 0));
+    const int source_size = sqlite3_column_bytes(metadata.get(), 0);
+    if (source == nullptr || source_size <= 0 || source_size > 128) {
+        throw std::runtime_error("Raft snapshot staging source identity is malformed");
+    }
+    transfer.source_id.assign(source, static_cast<std::size_t>(source_size));
+    const sqlite3_int64 index = sqlite3_column_int64(metadata.get(), 1);
+    const sqlite3_int64 term = sqlite3_column_int64(metadata.get(), 2);
+    const sqlite3_int64 total = sqlite3_column_int64(metadata.get(), 3);
+    const sqlite3_int64 next = sqlite3_column_int64(metadata.get(), 6);
+    if (index <= 0 || term <= 0 || total <= 0 || total > 64LL * 1024LL * 1024LL ||
+        next < 0 || next > total) {
+        throw std::runtime_error("Raft snapshot staging metadata is outside configured bounds");
+    }
+    transfer.snapshot_index = static_cast<std::uint64_t>(index);
+    transfer.snapshot_term = static_cast<std::uint64_t>(term);
+    transfer.total_size = static_cast<std::uint64_t>(total);
+    transfer.checksum = fixed_column_blob<32>(metadata.get(), 4);
+    transfer.membership = column_blob(metadata.get(), 5);
+    if (transfer.membership.size() > 8192U) {
+        throw std::runtime_error("Raft snapshot staging membership metadata is oversized");
+    }
+
+    Statement chunks(db_, "SELECT chunk_offset, payload FROM raft_snapshot_staging_chunks ORDER BY chunk_offset;");
+    std::uint64_t expected_offset = 0;
+    while (true) {
+        const int chunk_step = sqlite3_step(chunks.get());
+        if (chunk_step == SQLITE_DONE) break;
+        check_sqlite(chunk_step, db_, "read Raft snapshot staging chunk");
+        const sqlite3_int64 stored_offset = sqlite3_column_int64(chunks.get(), 0);
+        const Bytes chunk = column_blob(chunks.get(), 1);
+        if (stored_offset < 0 || static_cast<std::uint64_t>(stored_offset) != expected_offset ||
+            chunk.empty() || chunk.size() > 512U * 1024U ||
+            chunk.size() > transfer.total_size - expected_offset) {
+            throw std::runtime_error("Raft snapshot staging chunks are not contiguous or exceed bounds");
+        }
+        transfer.payload.insert(transfer.payload.end(), chunk.begin(), chunk.end());
+        expected_offset += static_cast<std::uint64_t>(chunk.size());
+    }
+    if (expected_offset != static_cast<std::uint64_t>(next)) {
+        throw std::runtime_error("Raft snapshot staging offset does not match durable chunk contents");
+    }
+    return transfer;
+}
+
+void SqliteStore::append_raft_snapshot_staging_chunk(
+    const consensus::RaftSnapshotTransfer& transfer,
+    std::uint64_t offset,
+    const Bytes& chunk) {
+    constexpr std::uint64_t maximum_snapshot = 64ULL * 1024ULL * 1024ULL;
+    constexpr std::size_t maximum_chunk = 512U * 1024U;
+    if (transfer.source_id.empty() || transfer.source_id.size() > 128U ||
+        transfer.snapshot_index == 0 || transfer.snapshot_index > static_cast<std::uint64_t>(INT64_MAX) ||
+        transfer.snapshot_term == 0 || transfer.snapshot_term > static_cast<std::uint64_t>(INT64_MAX) ||
+        transfer.total_size == 0 || transfer.total_size > maximum_snapshot ||
+        transfer.membership.size() > 8192U || chunk.empty() || chunk.size() > maximum_chunk ||
+        offset > transfer.total_size || chunk.size() > transfer.total_size - offset ||
+        offset > static_cast<std::uint64_t>(INT64_MAX)) {
+        throw std::invalid_argument("Raft snapshot staging chunk metadata or payload is outside configured bounds");
+    }
+
+    SqlTransaction transaction(db_);
+    Statement current(db_,
+        "SELECT source_id, snapshot_index, snapshot_term, total_size, checksum, membership, next_offset "
+        "FROM raft_snapshot_staging WHERE singleton=1;");
+    const int current_step = sqlite3_step(current.get());
+    bool same_transfer = false;
+    std::uint64_t expected_offset = 0;
+    if (current_step == SQLITE_ROW) {
+        const auto* source = reinterpret_cast<const char*>(sqlite3_column_text(current.get(), 0));
+        const int source_size = sqlite3_column_bytes(current.get(), 0);
+        const sqlite3_int64 index = sqlite3_column_int64(current.get(), 1);
+        const sqlite3_int64 term = sqlite3_column_int64(current.get(), 2);
+        const sqlite3_int64 total = sqlite3_column_int64(current.get(), 3);
+        const Bytes checksum = column_blob(current.get(), 4);
+        const Bytes membership = column_blob(current.get(), 5);
+        const sqlite3_int64 next = sqlite3_column_int64(current.get(), 6);
+        same_transfer = source != nullptr && source_size > 0 &&
+            std::string(source, static_cast<std::size_t>(source_size)) == transfer.source_id &&
+            index == static_cast<sqlite3_int64>(transfer.snapshot_index) &&
+            term == static_cast<sqlite3_int64>(transfer.snapshot_term) &&
+            total == static_cast<sqlite3_int64>(transfer.total_size) &&
+            checksum.size() == transfer.checksum.size() &&
+            std::equal(checksum.begin(), checksum.end(), transfer.checksum.begin()) &&
+            membership == transfer.membership;
+        if (next < 0) throw std::runtime_error("negative durable Raft snapshot staging offset");
+        expected_offset = static_cast<std::uint64_t>(next);
+    } else if (current_step != SQLITE_DONE) {
+        check_sqlite(current_step, db_, "inspect current Raft snapshot staging transfer");
+    }
+
+    if (!same_transfer) {
+        if (offset != 0) {
+            throw std::runtime_error("new Raft snapshot staging transfer must begin at offset zero");
+        }
+        execute(db_, "DELETE FROM raft_snapshot_staging_chunks; DELETE FROM raft_snapshot_staging;");
+        Statement insert_metadata(db_,
+            "INSERT INTO raft_snapshot_staging(singleton, source_id, snapshot_index, snapshot_term, "
+            "total_size, checksum, membership, next_offset) VALUES(1, ?1, ?2, ?3, ?4, ?5, ?6, 0);");
+        bind_text(insert_metadata.get(), 1, transfer.source_id, db_);
+        check_sqlite(sqlite3_bind_int64(insert_metadata.get(), 2,
+            static_cast<sqlite3_int64>(transfer.snapshot_index)), db_, "bind staged snapshot index");
+        check_sqlite(sqlite3_bind_int64(insert_metadata.get(), 3,
+            static_cast<sqlite3_int64>(transfer.snapshot_term)), db_, "bind staged snapshot term");
+        check_sqlite(sqlite3_bind_int64(insert_metadata.get(), 4,
+            static_cast<sqlite3_int64>(transfer.total_size)), db_, "bind staged snapshot size");
+        bind_blob(insert_metadata.get(), 5, transfer.checksum.data(), transfer.checksum.size(), db_);
+        if (transfer.membership.empty()) {
+            check_sqlite(sqlite3_bind_zeroblob(insert_metadata.get(), 6, 0),
+                         db_, "bind empty staged snapshot membership");
+        } else {
+            bind_blob(insert_metadata.get(), 6, transfer.membership.data(), transfer.membership.size(), db_);
+        }
+        insert_metadata.step_done();
+        expected_offset = 0;
+    }
+    if (offset != expected_offset) {
+        throw std::runtime_error("Raft snapshot chunk is not at the next durable staging offset");
+    }
+
+    Statement insert_chunk(db_, "INSERT INTO raft_snapshot_staging_chunks(chunk_offset, payload) VALUES(?1, ?2);");
+    check_sqlite(sqlite3_bind_int64(insert_chunk.get(), 1, static_cast<sqlite3_int64>(offset)),
+                 db_, "bind Raft snapshot chunk offset");
+    bind_blob(insert_chunk.get(), 2, chunk.data(), chunk.size(), db_);
+    insert_chunk.step_done();
+
+    Statement update_offset(db_, "UPDATE raft_snapshot_staging SET next_offset=?1 WHERE singleton=1 AND next_offset=?2;");
+    check_sqlite(sqlite3_bind_int64(update_offset.get(), 1,
+        static_cast<sqlite3_int64>(offset + static_cast<std::uint64_t>(chunk.size()))),
+        db_, "bind updated snapshot staging offset");
+    check_sqlite(sqlite3_bind_int64(update_offset.get(), 2, static_cast<sqlite3_int64>(offset)),
+                 db_, "bind expected snapshot staging offset");
+    update_offset.step_done();
+    if (sqlite3_changes(db_) != 1) {
+        throw std::runtime_error("Raft snapshot staging offset changed concurrently");
+    }
+    transaction.commit();
+    restrict_file_permissions();
+}
+
+void SqliteStore::clear_raft_snapshot_staging() {
+    SqlTransaction transaction(db_);
+    execute(db_, "DELETE FROM raft_snapshot_staging_chunks; DELETE FROM raft_snapshot_staging;");
     transaction.commit();
     restrict_file_permissions();
 }

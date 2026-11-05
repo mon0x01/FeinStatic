@@ -73,6 +73,19 @@ struct RaftMessage {
     [[nodiscard]] static RaftMessage deserialize(const Bytes& bytes);
 };
 
+// A partially received InstallSnapshot transfer. The payload is the durable
+// prefix already acknowledged to the sender; SQLite-backed implementations
+// persist every new chunk before returning the next offset.
+struct RaftSnapshotTransfer {
+    std::string source_id;
+    std::uint64_t snapshot_index{0};
+    std::uint64_t snapshot_term{0};
+    std::uint64_t total_size{0};
+    Hash checksum{};
+    Bytes membership;
+    Bytes payload;
+};
+
 struct RaftPersistentState {
     // The checkpoint is the identical, already-validated Ledger prefix from
     // which every member begins consensus. Raft log indices are anchored at
@@ -124,6 +137,10 @@ using RaftSnapshotReadCallback = std::function<Bytes(std::uint64_t)>;
 using RaftSnapshotSaveCallback = std::function<void(std::uint64_t, const Bytes&)>;
 using RaftSnapshotInstallCallback = std::function<void(
     const RaftPersistentState&, const Bytes&)>;
+using RaftSnapshotStageLoadCallback = std::function<std::optional<RaftSnapshotTransfer>()>;
+using RaftSnapshotStageSaveCallback = std::function<void(
+    const RaftSnapshotTransfer&, std::uint64_t, const Bytes&)>;
+using RaftSnapshotStageClearCallback = std::function<void()>;
 
 // A deterministic, crash-fault-tolerant Raft state machine. The operator
 // pre-provisions endpoints/trust for voters and learners. Membership changes
@@ -137,7 +154,10 @@ public:
              RaftPersistCallback persist = {},
              RaftSnapshotReadCallback read_snapshot = {},
              RaftSnapshotSaveCallback save_snapshot = {},
-             RaftSnapshotInstallCallback install_snapshot = {});
+             RaftSnapshotInstallCallback install_snapshot = {},
+             RaftSnapshotStageLoadCallback load_snapshot_stage = {},
+             RaftSnapshotStageSaveCallback save_snapshot_stage = {},
+             RaftSnapshotStageClearCallback clear_snapshot_stage = {});
 
     [[nodiscard]] std::vector<RaftMessage> tick(std::chrono::milliseconds elapsed);
     [[nodiscard]] std::vector<RaftMessage> receive(const RaftMessage& message);
@@ -194,6 +214,8 @@ private:
                                                      std::uint64_t next_offset) const;
     [[nodiscard]] std::vector<RaftMessage> receive_install_snapshot(const RaftMessage& message);
     [[nodiscard]] std::vector<RaftMessage> receive_snapshot_response(const RaftMessage& message);
+    void complete_incoming_snapshot();
+    void clear_incoming_snapshot(bool clear_durable_stage);
     [[nodiscard]] std::uint64_t term_at(std::uint64_t index) const;
     [[nodiscard]] std::uint64_t first_index_of_term(std::uint64_t term) const;
     [[nodiscard]] std::vector<RaftMessage> broadcast_append_entries() const;
@@ -209,6 +231,9 @@ private:
     RaftSnapshotReadCallback read_snapshot_callback_;
     RaftSnapshotSaveCallback save_snapshot_callback_;
     RaftSnapshotInstallCallback install_snapshot_callback_;
+    RaftSnapshotStageLoadCallback load_snapshot_stage_callback_;
+    RaftSnapshotStageSaveCallback save_snapshot_stage_callback_;
+    RaftSnapshotStageClearCallback clear_snapshot_stage_callback_;
     RaftRole role_{RaftRole::Follower};
     std::string leader_id_;
     std::map<std::string, bool> votes_received_;
@@ -219,6 +244,7 @@ private:
     std::uint64_t incoming_snapshot_term_{0};
     std::uint64_t incoming_snapshot_total_size_{0};
     Hash incoming_snapshot_hash_{};
+    Bytes incoming_snapshot_membership_;
     Bytes incoming_snapshot_buffer_;
     std::string incoming_snapshot_from_;
     mutable Bytes outgoing_snapshot_buffer_;

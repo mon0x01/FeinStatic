@@ -180,6 +180,115 @@ FS_TEST(raft_snapshot_compaction_and_restarted_ledger_node_catch_up_atomically) 
 
 } // namespace
 
+
+FS_TEST(raft_snapshot_chunk_staging_survives_restart_and_recovers_after_install_crash) {
+    const std::string path = raft_ledger_test_db("snapshot-resume-staging");
+    remove_raft_ledger_db(path);
+    const Wallet funded = Wallet::generate();
+    auto ledger = Ledger::initialize(path, {{funded.address(), 100 * kAtomsPerCoin}}, 0, kAtomsPerCoin);
+
+    RaftConfig config;
+    config.node_id = "node-b";
+    config.cluster_id = "feinstatic-snapshot-resume-test";
+    config.members = {"node-a", "node-b", "node-c"};
+    config.random_seed = 77;
+
+    Bytes payload(700U * 1024U, 0);
+    for (std::size_t i = 0; i < payload.size(); ++i) {
+        payload[i] = static_cast<Byte>((i * 131U + 17U) & 0xffU);
+    }
+    const Hash checksum = crypto::sha256(payload);
+    constexpr std::size_t first_chunk_size = 512U * 1024U;
+    Bytes first_chunk(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(first_chunk_size));
+    Bytes second_chunk(payload.begin() + static_cast<std::ptrdiff_t>(first_chunk_size), payload.end());
+
+    bool fail_install_once = true;
+    Bytes installed_payload;
+    auto create_receiver = [&](RaftStateStore& store) {
+        return std::make_unique<RaftNode>(
+            config, store.load(),
+            [&store](const RaftPersistentState& state) { store.save(state); },
+            RaftSnapshotReadCallback{}, RaftSnapshotSaveCallback{},
+            [&store, &fail_install_once, &installed_payload](const RaftPersistentState& state,
+                                                              const Bytes& snapshot_payload) {
+                if (fail_install_once) {
+                    fail_install_once = false;
+                    throw std::runtime_error("injected crash after final chunk was durably staged");
+                }
+                store.save_snapshot(state.snapshot_index, snapshot_payload);
+                store.save(state);
+                installed_payload = snapshot_payload;
+            },
+            [&store] { return store.load_snapshot_staging(); },
+            [&store](const RaftSnapshotTransfer& transfer, std::uint64_t offset, const Bytes& chunk) {
+                store.append_snapshot_staging_chunk(transfer, offset, chunk);
+            },
+            [&store] { store.clear_snapshot_staging(); });
+    };
+
+    RaftMessage first;
+    first.type = RaftMessageType::InstallSnapshot;
+    first.term = 1;
+    first.from = "node-a";
+    first.to = "node-b";
+    first.snapshot_index = 1;
+    first.snapshot_term = 1;
+    first.snapshot_offset = 0;
+    first.snapshot_total_size = payload.size();
+    first.snapshot_hash = checksum;
+    first.snapshot_chunk = first_chunk;
+
+    // First process durably accepts one 512 KiB chunk and acknowledges it.
+    {
+        RaftStateStore store(path);
+        auto receiver = create_receiver(store);
+        const auto response = receiver->receive(first);
+        FS_REQUIRE(response.size() == 1);
+        FS_REQUIRE(response.front().success);
+        FS_REQUIRE(response.front().snapshot_offset == first_chunk_size);
+        const auto staged = store.load_snapshot_staging();
+        FS_REQUIRE(staged.has_value());
+        FS_REQUIRE(staged->payload == first_chunk);
+    }
+
+    // Simulate a receiver restart. The sender also starts from offset zero;
+    // the receiver must tell it the already durable offset instead of resetting.
+    {
+        RaftStateStore store(path);
+        auto receiver = create_receiver(store);
+        const auto resume = receiver->receive(first);
+        FS_REQUIRE(resume.size() == 1);
+        FS_REQUIRE(!resume.front().success);
+        FS_REQUIRE(resume.front().snapshot_offset == first_chunk_size);
+
+        RaftMessage final_chunk = first;
+        final_chunk.snapshot_offset = first_chunk_size;
+        final_chunk.snapshot_chunk = second_chunk;
+        FS_REQUIRE_THROWS(receiver->receive(final_chunk));
+        const auto staged = store.load_snapshot_staging();
+        FS_REQUIRE(staged.has_value());
+        FS_REQUIRE(staged->payload == payload);
+        FS_REQUIRE(staged->payload.size() == staged->total_size);
+    }
+
+    // Crash after the final chunk was committed to SQLite but before the
+    // application install completed. Startup must finish that installation.
+    {
+        RaftStateStore store(path);
+        auto receiver = create_receiver(store);
+        FS_REQUIRE(receiver->persistent_state().snapshot_index == 1);
+        FS_REQUIRE(receiver->persistent_state().last_applied == 1);
+        FS_REQUIRE(installed_payload == payload);
+        FS_REQUIRE(!store.load_snapshot_staging().has_value());
+        const auto persisted = store.load();
+        FS_REQUIRE(persisted.has_value());
+        FS_REQUIRE(persisted->snapshot_index == 1);
+        FS_REQUIRE(persisted->snapshot_size == payload.size());
+    }
+
+    remove_raft_ledger_db(path);
+}
+
 FS_TEST(raft_snapshot_install_rolls_back_ledger_and_raft_state_on_sqlite_failure) {
     const std::string source_path = raft_ledger_test_db("atomic-snapshot-source");
     const std::string target_path = raft_ledger_test_db("atomic-snapshot-target");

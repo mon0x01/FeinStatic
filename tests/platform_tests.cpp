@@ -188,7 +188,7 @@ FS_TEST(platform_schema_v1_migration_is_additive_and_preserves_ledger_rows) {
     sqlite3_stmt* statement = nullptr;
     FS_REQUIRE(sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &statement, nullptr) == SQLITE_OK);
     FS_REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
-    FS_REQUIRE(sqlite3_column_int(statement, 0) == 5);
+    FS_REQUIRE(sqlite3_column_int(statement, 0) == 6);
     (void)sqlite3_finalize(statement);
     statement = nullptr;
     FS_REQUIRE(sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM blocks;", -1, &statement, nullptr) == SQLITE_OK);

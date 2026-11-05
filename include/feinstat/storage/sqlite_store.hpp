@@ -1,6 +1,7 @@
 #pragma once
 
 #include "feinstat/crypto/crypto.hpp"
+#include "feinstat/consensus/raft.hpp"
 #include "feinstat/ledger/block.hpp"
 
 #include <memory>
@@ -85,6 +86,14 @@ public:
     void save_raft_snapshot(std::uint64_t snapshot_index, const Bytes& payload);
     [[nodiscard]] std::optional<Bytes> load_raft_snapshot(std::uint64_t snapshot_index) const;
     void prune_raft_snapshots_before(std::uint64_t snapshot_index);
+    // Durably stage InstallSnapshot chunks before acknowledging their offsets.
+    // A single transfer is staged per node; a new metadata tuple replaces the
+    // old partial transfer only when its first chunk (offset zero) arrives.
+    [[nodiscard]] std::optional<consensus::RaftSnapshotTransfer> load_raft_snapshot_staging() const;
+    void append_raft_snapshot_staging_chunk(const consensus::RaftSnapshotTransfer& transfer,
+                                             std::uint64_t offset,
+                                             const Bytes& chunk);
+    void clear_raft_snapshot_staging();
     [[nodiscard]] std::uint64_t replace_chain_mempool_and_save_raft_snapshot(
         const std::vector<ledger::Block>& complete_chain,
         const std::vector<ledger::Transaction>& mempool_transactions,

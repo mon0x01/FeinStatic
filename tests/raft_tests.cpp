@@ -575,7 +575,7 @@ FS_TEST(raft_checkpoint_binds_state_to_exact_ledger_prefix) {
     FS_REQUIRE_THROWS(RaftNode(wrong_membership, state));
 }
 
-FS_TEST(raft_sqlite_snapshot_is_durable_revisioned_and_migrates_schema_v3_to_v5) {
+FS_TEST(raft_sqlite_snapshot_is_durable_revisioned_and_migrates_schema_v3_to_v6) {
     const std::string path = raft_test_db("snapshot");
     const Wallet wallet = Wallet::generate();
     {
@@ -610,11 +610,76 @@ FS_TEST(raft_sqlite_snapshot_is_durable_revisioned_and_migrates_schema_v3_to_v5)
     sqlite3_stmt* statement = nullptr;
     FS_REQUIRE(sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &statement, nullptr) == SQLITE_OK);
     FS_REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
-    FS_REQUIRE(sqlite3_column_int(statement, 0) == 5);
+    FS_REQUIRE(sqlite3_column_int(statement, 0) == 6);
     sqlite3_finalize(statement);
     sqlite3_close(db);
     auto recovered = Ledger::open(path, 0, kAtomsPerCoin);
     FS_REQUIRE(recovered.chain().height() == 0);
+    remove_raft_db(path);
+}
+
+FS_TEST(raft_sqlite_schema_v5_to_v6_adds_staging_tables_without_rewriting_existing_rows) {
+    const std::string path = raft_test_db("schema-v5-to-v6");
+    const Wallet wallet = Wallet::generate();
+    {
+        auto ledger = Ledger::initialize(path, {{wallet.address(), 10 * kAtomsPerCoin}}, 0, kAtomsPerCoin);
+    }
+
+    RaftPersistentState initial_state;
+    initial_state.configuration_hash[0] = 0x5a;
+    const Bytes completed_snapshot{0x46, 0x53, 0x4c, 0x53, 0x01, 0x02, 0x03};
+    {
+        RaftStateStore store(path);
+        store.save(initial_state);
+        store.save_snapshot(1, completed_snapshot);
+        FS_REQUIRE(store.load_snapshot(1) == completed_snapshot);
+    }
+
+    // Emulate the exact v1.9.0 on-disk schema: all existing v5 tables/data are
+    // retained, while the two v2.0-only staging tables are absent.
+    sqlite3* db = nullptr;
+    FS_REQUIRE(sqlite3_open(path.c_str(), &db) == SQLITE_OK);
+    char* error = nullptr;
+    const int downgrade = sqlite3_exec(db,
+        "DROP TABLE raft_snapshot_staging_chunks;"
+        "DROP TABLE raft_snapshot_staging;"
+        "PRAGMA user_version=5;",
+        nullptr, nullptr, &error);
+    const std::string downgrade_error = error ? error : "";
+    sqlite3_free(error);
+    sqlite3_close(db);
+    FS_REQUIRE(downgrade == SQLITE_OK);
+    (void)downgrade_error;
+
+    // Opening through the v2.0 state store performs only the additive v5 -> v6
+    // migration. Previously persisted Raft state and completed snapshots survive.
+    {
+        RaftStateStore migrated(path);
+        const auto state = migrated.load();
+        FS_REQUIRE(state.has_value());
+        FS_REQUIRE(state->serialize() == initial_state.serialize());
+        FS_REQUIRE(migrated.load_snapshot(1) == completed_snapshot);
+    }
+
+    FS_REQUIRE(sqlite3_open(path.c_str(), &db) == SQLITE_OK);
+    sqlite3_stmt* statement = nullptr;
+    FS_REQUIRE(sqlite3_prepare_v2(db, "PRAGMA user_version;", -1, &statement, nullptr) == SQLITE_OK);
+    FS_REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    FS_REQUIRE(sqlite3_column_int(statement, 0) == 6);
+    sqlite3_finalize(statement);
+    statement = nullptr;
+    FS_REQUIRE(sqlite3_prepare_v2(db,
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN "
+        "('raft_snapshot_staging','raft_snapshot_staging_chunks');",
+        -1, &statement, nullptr) == SQLITE_OK);
+    FS_REQUIRE(sqlite3_step(statement) == SQLITE_ROW);
+    FS_REQUIRE(sqlite3_column_int(statement, 0) == 2);
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+
+    auto recovered = Ledger::open(path, 0, kAtomsPerCoin);
+    FS_REQUIRE(recovered.chain().height() == 0);
+    FS_REQUIRE(recovered.chain().validate());
     remove_raft_db(path);
 }
 

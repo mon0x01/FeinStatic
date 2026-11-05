@@ -19,6 +19,11 @@ public:
     void save(const RaftPersistentState& state);
     void save_snapshot(std::uint64_t snapshot_index, const Bytes& payload);
     [[nodiscard]] Bytes load_snapshot(std::uint64_t snapshot_index) const;
+    [[nodiscard]] std::optional<RaftSnapshotTransfer> load_snapshot_staging() const;
+    void append_snapshot_staging_chunk(const RaftSnapshotTransfer& transfer,
+                                       std::uint64_t offset,
+                                       const Bytes& chunk);
+    void clear_snapshot_staging();
     void install_snapshot(const RaftPersistentState& state,
                           const Bytes& payload,
                           ledger::Ledger& ledger,

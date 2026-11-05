@@ -47,7 +47,12 @@ RaftLedgerAdapter::RaftLedgerAdapter(
                 throw std::runtime_error("received Ledger snapshot index does not match Raft metadata");
             }
             store_.install_snapshot(state, payload, ledger_, blocks);
-        });
+        },
+        [this] { return store_.load_snapshot_staging(); },
+        [this](const RaftSnapshotTransfer& transfer, std::uint64_t offset, const Bytes& chunk) {
+            store_.append_snapshot_staging_chunk(transfer, offset, chunk);
+        },
+        [this] { store_.clear_snapshot_staging(); });
     validate_recovered_ledger();
     (void)apply_committed();
 }

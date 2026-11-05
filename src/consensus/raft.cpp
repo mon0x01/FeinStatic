@@ -485,12 +485,18 @@ RaftNode::RaftNode(RaftConfig config,
                    RaftPersistCallback persist_callback,
                    RaftSnapshotReadCallback read_snapshot_callback,
                    RaftSnapshotSaveCallback save_snapshot_callback,
-                   RaftSnapshotInstallCallback install_snapshot_callback)
+                   RaftSnapshotInstallCallback install_snapshot_callback,
+                   RaftSnapshotStageLoadCallback load_snapshot_stage_callback,
+                   RaftSnapshotStageSaveCallback save_snapshot_stage_callback,
+                   RaftSnapshotStageClearCallback clear_snapshot_stage_callback)
     : config_(std::move(config)),
       persist_callback_(std::move(persist_callback)),
       read_snapshot_callback_(std::move(read_snapshot_callback)),
       save_snapshot_callback_(std::move(save_snapshot_callback)),
-      install_snapshot_callback_(std::move(install_snapshot_callback)) {
+      install_snapshot_callback_(std::move(install_snapshot_callback)),
+      load_snapshot_stage_callback_(std::move(load_snapshot_stage_callback)),
+      save_snapshot_stage_callback_(std::move(save_snapshot_stage_callback)),
+      clear_snapshot_stage_callback_(std::move(clear_snapshot_stage_callback)) {
     validate_id(config_.node_id, "node ID");
     validate_id(config_.cluster_id, "cluster ID");
     if (config_.members.size() < 3 || config_.members.size() > kRaftMaximumMembers ||
@@ -583,6 +589,35 @@ RaftNode::RaftNode(RaftConfig config,
         throw std::invalid_argument("local node is absent from Raft voter and learner roster");
     }
     reset_election_timeout();
+    if (load_snapshot_stage_callback_) {
+        const auto staged = load_snapshot_stage_callback_();
+        if (staged) {
+            if (staged->source_id.empty() || !is_member(staged->source_id) ||
+                staged->snapshot_index == 0 || staged->snapshot_term == 0 ||
+                staged->snapshot_term > state_.current_term || staged->total_size == 0 ||
+                staged->total_size > kRaftMaximumSnapshotBytes || staged->payload.size() > staged->total_size ||
+                staged->membership.size() > 8192U) {
+                throw std::runtime_error("durable incoming Raft snapshot staging metadata is invalid");
+            }
+            if (staged->snapshot_index <= state_.commit_index) {
+                if (clear_snapshot_stage_callback_) clear_snapshot_stage_callback_();
+            } else {
+                incoming_snapshot_index_ = staged->snapshot_index;
+                incoming_snapshot_from_ = staged->source_id;
+                incoming_snapshot_term_ = staged->snapshot_term;
+                incoming_snapshot_total_size_ = staged->total_size;
+                incoming_snapshot_hash_ = staged->checksum;
+                incoming_snapshot_membership_ = staged->membership;
+                incoming_snapshot_buffer_ = staged->payload;
+                if (incoming_snapshot_buffer_.size() == incoming_snapshot_total_size_) {
+                    if (crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
+                        throw std::runtime_error("completed durable incoming Raft snapshot failed its checksum");
+                    }
+                    complete_incoming_snapshot();
+                }
+            }
+        }
+    }
 }
 
 Hash RaftNode::calculate_configuration_hash() const {
@@ -716,12 +751,7 @@ void RaftNode::become_follower(std::uint64_t new_term) {
     next_index_.clear();
     match_index_.clear();
     snapshot_send_offset_.clear();
-    incoming_snapshot_buffer_.clear();
-    incoming_snapshot_index_ = 0;
-    incoming_snapshot_from_.clear();
-    incoming_snapshot_total_size_ = 0;
-    incoming_snapshot_term_ = 0;
-    incoming_snapshot_hash_ = {};
+    clear_incoming_snapshot(true);
     outgoing_snapshot_buffer_.clear();
     outgoing_snapshot_index_ = 0;
     heartbeat_elapsed_ = std::chrono::milliseconds::zero();
@@ -934,6 +964,70 @@ std::vector<RaftMessage> RaftNode::receive_snapshot_response(const RaftMessage& 
     return outbound;
 }
 
+void RaftNode::clear_incoming_snapshot(bool clear_durable_stage) {
+    const bool had_transfer = incoming_snapshot_index_ != 0 || !incoming_snapshot_buffer_.empty();
+    if (clear_durable_stage && had_transfer && clear_snapshot_stage_callback_) {
+        clear_snapshot_stage_callback_();
+    }
+    incoming_snapshot_buffer_.clear();
+    incoming_snapshot_membership_.clear();
+    incoming_snapshot_index_ = 0;
+    incoming_snapshot_from_.clear();
+    incoming_snapshot_total_size_ = 0;
+    incoming_snapshot_term_ = 0;
+    incoming_snapshot_hash_ = {};
+}
+
+void RaftNode::complete_incoming_snapshot() {
+    if (incoming_snapshot_index_ == 0 || incoming_snapshot_buffer_.empty() ||
+        incoming_snapshot_buffer_.size() != incoming_snapshot_total_size_ ||
+        crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
+        throw std::runtime_error("incoming Raft snapshot is incomplete or failed its checksum");
+    }
+    if (!install_snapshot_callback_) {
+        throw std::logic_error("Raft snapshot receiver has no atomic application-install callback");
+    }
+
+    RaftPersistentState candidate = state_;
+    bool retain_suffix = false;
+    if (incoming_snapshot_index_ <= last_log_index()) {
+        try { retain_suffix = term_at(incoming_snapshot_index_) == incoming_snapshot_term_; }
+        catch (const std::out_of_range&) { retain_suffix = false; }
+    }
+    if (retain_suffix) {
+        const auto remove_count = static_cast<std::size_t>(incoming_snapshot_index_ - state_.snapshot_index);
+        candidate.log.erase(candidate.log.begin(), candidate.log.begin() + static_cast<std::ptrdiff_t>(remove_count));
+    } else {
+        candidate.log.clear();
+    }
+    candidate.snapshot_index = incoming_snapshot_index_;
+    candidate.snapshot_term = incoming_snapshot_term_;
+    candidate.snapshot_hash = incoming_snapshot_hash_;
+    candidate.snapshot_size = incoming_snapshot_total_size_;
+    if (!incoming_snapshot_membership_.empty()) {
+        candidate.snapshot_membership = RaftMembershipState::deserialize(incoming_snapshot_membership_);
+        candidate.membership = candidate.snapshot_membership;
+    }
+    candidate.commit_index = std::max(candidate.commit_index, incoming_snapshot_index_);
+    candidate.last_applied = incoming_snapshot_index_;
+    if (candidate.membership && !candidate.snapshot_membership) {
+        candidate.snapshot_membership = candidate.membership;
+    }
+    refresh_membership_from_log(candidate);
+    (void)state_body(candidate);
+    try {
+        install_snapshot_callback_(candidate, incoming_snapshot_buffer_);
+        state_ = std::move(candidate);
+        if (clear_snapshot_stage_callback_) clear_snapshot_stage_callback_();
+    } catch (...) {
+        // The complete transfer remains staged if atomic installation fails.
+        // Startup will retry installation from the durable full payload.
+        persistence_failed_ = true;
+        throw;
+    }
+    clear_incoming_snapshot(false);
+}
+
 std::vector<RaftMessage> RaftNode::receive_install_snapshot(const RaftMessage& message) {
     if (!is_member(message.from)) return {make_snapshot_response(message, false, 0)};
     if (message.term < state_.current_term) {
@@ -948,34 +1042,60 @@ std::vector<RaftMessage> RaftNode::receive_install_snapshot(const RaftMessage& m
     leader_id_ = message.from;
 
     if (message.snapshot_index <= state_.commit_index) {
+        if (incoming_snapshot_index_ != 0) clear_incoming_snapshot(true);
         return {make_snapshot_response(message, true, message.snapshot_total_size)};
     }
 
-    if (!incoming_snapshot_buffer_.empty() && incoming_snapshot_from_ != message.from) {
-        return {make_snapshot_response(message, false, 0)};
-    }
-    const bool new_transfer = message.snapshot_offset == 0 &&
-        (incoming_snapshot_index_ != message.snapshot_index || incoming_snapshot_hash_ != message.snapshot_hash ||
-         incoming_snapshot_total_size_ != message.snapshot_total_size);
-    if (new_transfer) {
+    const bool active_transfer = incoming_snapshot_index_ != 0;
+    const bool same_transfer = active_transfer && incoming_snapshot_from_ == message.from &&
+        incoming_snapshot_index_ == message.snapshot_index &&
+        incoming_snapshot_term_ == message.snapshot_term &&
+        incoming_snapshot_total_size_ == message.snapshot_total_size &&
+        incoming_snapshot_hash_ == message.snapshot_hash &&
+        incoming_snapshot_membership_ == message.snapshot_membership;
+
+    if (!same_transfer) {
+        if (message.snapshot_offset != 0) {
+            const std::uint64_t expected = active_transfer
+                ? static_cast<std::uint64_t>(incoming_snapshot_buffer_.size()) : 0;
+            return {make_snapshot_response(message, false, expected)};
+        }
+        if (active_transfer) clear_incoming_snapshot(true);
         incoming_snapshot_index_ = message.snapshot_index;
         incoming_snapshot_from_ = message.from;
         incoming_snapshot_term_ = message.snapshot_term;
         incoming_snapshot_total_size_ = message.snapshot_total_size;
         incoming_snapshot_hash_ = message.snapshot_hash;
+        incoming_snapshot_membership_ = message.snapshot_membership;
         incoming_snapshot_buffer_.clear();
         incoming_snapshot_buffer_.reserve(static_cast<std::size_t>(message.snapshot_total_size));
-    }
-    if (incoming_snapshot_index_ != message.snapshot_index ||
-        incoming_snapshot_term_ != message.snapshot_term ||
-        incoming_snapshot_total_size_ != message.snapshot_total_size ||
-        incoming_snapshot_hash_ != message.snapshot_hash) {
-        return {make_snapshot_response(message, false, 0)};
     }
 
     const std::uint64_t expected_offset = static_cast<std::uint64_t>(incoming_snapshot_buffer_.size());
     if (message.snapshot_offset != expected_offset) {
         return {make_snapshot_response(message, false, expected_offset)};
+    }
+    if (message.snapshot_chunk.empty() || message.snapshot_chunk.size() > kRaftSnapshotChunkBytes ||
+        expected_offset > incoming_snapshot_total_size_ ||
+        message.snapshot_chunk.size() > incoming_snapshot_total_size_ - expected_offset) {
+        return {make_snapshot_response(message, false, expected_offset)};
+    }
+
+    if (save_snapshot_stage_callback_) {
+        RaftSnapshotTransfer transfer;
+        transfer.source_id = incoming_snapshot_from_;
+        transfer.snapshot_index = incoming_snapshot_index_;
+        transfer.snapshot_term = incoming_snapshot_term_;
+        transfer.total_size = incoming_snapshot_total_size_;
+        transfer.checksum = incoming_snapshot_hash_;
+        transfer.membership = incoming_snapshot_membership_;
+        try {
+            // The chunk is durable before the response acknowledges its offset.
+            save_snapshot_stage_callback_(transfer, expected_offset, message.snapshot_chunk);
+        } catch (...) {
+            persistence_failed_ = true;
+            throw;
+        }
     }
     incoming_snapshot_buffer_.insert(incoming_snapshot_buffer_.end(),
                                      message.snapshot_chunk.begin(), message.snapshot_chunk.end());
@@ -984,64 +1104,10 @@ std::vector<RaftMessage> RaftNode::receive_install_snapshot(const RaftMessage& m
         return {make_snapshot_response(message, true, next_offset)};
     }
     if (crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
-        incoming_snapshot_buffer_.clear();
-        incoming_snapshot_index_ = 0;
-        incoming_snapshot_from_.clear();
-        incoming_snapshot_total_size_ = 0;
-        incoming_snapshot_term_ = 0;
-        incoming_snapshot_hash_ = {};
+        clear_incoming_snapshot(true);
         return {make_snapshot_response(message, false, 0)};
     }
-    if (!install_snapshot_callback_) {
-        incoming_snapshot_buffer_.clear();
-        incoming_snapshot_index_ = 0;
-        incoming_snapshot_from_.clear();
-        incoming_snapshot_total_size_ = 0;
-        incoming_snapshot_term_ = 0;
-        incoming_snapshot_hash_ = {};
-        throw std::logic_error("Raft snapshot receiver has no atomic application-install callback");
-    }
-
-    RaftPersistentState candidate = state_;
-    bool retain_suffix = false;
-    if (message.snapshot_index <= last_log_index()) {
-        try { retain_suffix = term_at(message.snapshot_index) == message.snapshot_term; }
-        catch (const std::out_of_range&) { retain_suffix = false; }
-    }
-    if (retain_suffix) {
-        const auto remove_count = static_cast<std::size_t>(message.snapshot_index - state_.snapshot_index);
-        candidate.log.erase(candidate.log.begin(), candidate.log.begin() + static_cast<std::ptrdiff_t>(remove_count));
-    } else {
-        candidate.log.clear();
-    }
-    candidate.snapshot_index = message.snapshot_index;
-    candidate.snapshot_term = message.snapshot_term;
-    candidate.snapshot_hash = message.snapshot_hash;
-    candidate.snapshot_size = message.snapshot_total_size;
-    if (!message.snapshot_membership.empty()) {
-        candidate.snapshot_membership = RaftMembershipState::deserialize(message.snapshot_membership);
-        candidate.membership = candidate.snapshot_membership;
-    }
-    candidate.commit_index = std::max(candidate.commit_index, message.snapshot_index);
-    candidate.last_applied = message.snapshot_index;
-    if (candidate.membership && !candidate.snapshot_membership) {
-        candidate.snapshot_membership = candidate.membership;
-    }
-    refresh_membership_from_log(candidate);
-    (void)state_body(candidate);
-    try {
-        install_snapshot_callback_(candidate, incoming_snapshot_buffer_);
-    } catch (...) {
-        persistence_failed_ = true;
-        throw;
-    }
-    state_ = std::move(candidate);
-    incoming_snapshot_buffer_.clear();
-    incoming_snapshot_index_ = 0;
-    incoming_snapshot_from_.clear();
-    incoming_snapshot_total_size_ = 0;
-    incoming_snapshot_term_ = 0;
-    incoming_snapshot_hash_ = {};
+    complete_incoming_snapshot();
     return {make_snapshot_response(message, true, next_offset)};
 }
 
