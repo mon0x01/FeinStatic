@@ -1635,6 +1635,16 @@ RaftPeerHealthReport PeerClient::raft_peer_health(const ledger::Ledger& local_le
         peer.consecutive_failures = reader.u32();
         peer.last_success_unix_ms = reader.u64();
         peer.last_failure_unix_ms = reader.u64();
+        if (!peer.enabled) peer.lifecycle_state = PeerLifecycleState::Disabled;
+        else if (peer.in_flight && peer.consecutive_failures >= kPeerOfflineFailureThreshold)
+            peer.lifecycle_state = PeerLifecycleState::HalfOpen;
+        else if (peer.consecutive_failures >= kPeerOfflineFailureThreshold)
+            peer.lifecycle_state = PeerLifecycleState::Offline;
+        else if (peer.consecutive_failures > 0)
+            peer.lifecycle_state = PeerLifecycleState::Degraded;
+        else if (peer.last_success_unix_ms > 0)
+            peer.lifecycle_state = PeerLifecycleState::Healthy;
+        else peer.lifecycle_state = PeerLifecycleState::Unknown;
         peer.retry_delay_ms = reader.u64();
         peer.last_error = reader.string(256);
         report.peers.push_back(std::move(peer));
@@ -1760,12 +1770,8 @@ struct NodeServer::Impl {
         std::uint64_t failures{0};
         std::uint64_t dropped{0};
         std::uint32_t consecutive_failures{0};
-        std::uint32_t raft_consecutive_failures{0};
-        std::uint32_t gossip_consecutive_failures{0};
         std::uint64_t last_success_unix_ms{0};
         std::uint64_t last_failure_unix_ms{0};
-        std::chrono::steady_clock::time_point retry_after{};
-        std::chrono::steady_clock::time_point gossip_retry_after{};
         std::string last_error;
     };
 
@@ -1773,6 +1779,7 @@ struct NodeServer::Impl {
         std::string peer_id;
         RaftPeerEndpoint endpoint;
         OutboundMessage item;
+        std::chrono::steady_clock::time_point started_at{};
     };
 
     Impl(ledger::Ledger& ledger_ref, const std::string& address, std::uint16_t requested_port,
@@ -1881,6 +1888,7 @@ struct NodeServer::Impl {
             for (const auto& [peer_id, peer_endpoint] : raft_endpoints) {
                 (void)peer_endpoint;
                 peer_counters.try_emplace(peer_id);
+                peer_lifecycle.try_emplace(peer_id, peer_id, raft_configuration->peer_lifecycle);
                 outbound_queues.try_emplace(peer_id);
                 pending_gossip_ids.try_emplace(peer_id);
             }
@@ -2352,31 +2360,29 @@ struct NodeServer::Impl {
                     endpoint = found->second;
                 }
 
-                const auto& counters = peer_counters[peer_id];
                 const bool raft_waiting = !queue->second.raft.empty();
                 const bool gossip_waiting = !queue->second.gossip.empty();
-                const bool raft_ready = raft_waiting && counters.retry_after <= now;
-                const bool gossip_ready = gossip_waiting && counters.gossip_retry_after <= now;
-                // Serve up to eight consecutive Raft messages before allowing
-                // one gossip message for this peer. Raft keeps priority without
-                // permitting a permanent gossip starvation condition.
-                constexpr std::size_t kMaximumRaftDispatchStreak = 8;
-                const bool take_raft = raft_ready &&
-                    (!gossip_ready || queue->second.consecutive_raft_dispatches < kMaximumRaftDispatchStreak);
-                if (!take_raft && !gossip_ready) {
-                    if (raft_waiting && counters.retry_after > now &&
-                        (!earliest_retry || counters.retry_after < *earliest_retry)) {
-                        earliest_retry = counters.retry_after;
-                    }
-                    if (gossip_waiting && counters.gossip_retry_after > now &&
-                        (!earliest_retry || counters.gossip_retry_after < *earliest_retry)) {
-                        earliest_retry = counters.gossip_retry_after;
+                auto lifecycle = peer_lifecycle.find(peer_id);
+                if (lifecycle == peer_lifecycle.end()) continue;
+                if (!lifecycle->second.can_attempt(now)) {
+                    const auto state = lifecycle->second.snapshot(now);
+                    if (state.retry_delay_ms > 0) {
+                        const auto retry = now + std::chrono::milliseconds(state.retry_delay_ms);
+                        if (!earliest_retry || retry < *earliest_retry) earliest_retry = retry;
                     }
                     continue;
                 }
+                // Serve up to eight consecutive Raft messages before allowing
+                // one gossip message for this peer. One peer-level circuit
+                // breaker gates both classes, so Raft and gossip cannot probe
+                // an unhealthy destination independently.
+                constexpr std::size_t kMaximumRaftDispatchStreak = 8;
+                const bool take_raft = raft_waiting &&
+                    (!gossip_waiting || queue->second.consecutive_raft_dispatches < kMaximumRaftDispatchStreak);
                 DispatchWork work;
                 work.peer_id = peer_id;
                 work.endpoint = std::move(endpoint);
+                work.started_at = now;
                 if (take_raft) {
                     work.item = std::move(queue->second.raft.front());
                     queue->second.raft.pop_front();
@@ -2385,6 +2391,13 @@ struct NodeServer::Impl {
                     work.item = std::move(queue->second.gossip.front());
                     queue->second.gossip.pop_front();
                     queue->second.consecutive_raft_dispatches = 0;
+                }
+                // The scheduler and lifecycle map are protected by the same
+                // mutex; begin_attempt must succeed after the eligibility test.
+                if (!lifecycle->second.begin_attempt(now)) {
+                    if (take_raft) queue->second.raft.push_front(std::move(work.item));
+                    else queue->second.gossip.push_front(std::move(work.item));
+                    continue;
                 }
                 // Counts and bytes include in-flight work. This reserves the
                 // capacity needed to requeue a failed send without losing it.
@@ -2448,19 +2461,23 @@ struct NodeServer::Impl {
                     endpoint_enabled = endpoint != raft_endpoints.end() && endpoint->second.enabled;
                 }
 
+                const auto completed_at = std::chrono::steady_clock::now();
+                const auto latency_us = static_cast<std::uint64_t>(std::max<std::int64_t>(0,
+                    std::chrono::duration_cast<std::chrono::microseconds>(completed_at - work->started_at).count()));
+                auto lifecycle = peer_lifecycle.find(work->peer_id);
+                if (lifecycle == peer_lifecycle.end()) {
+                    // The roster is immutable for the lifetime of the node;
+                    // this is defensive and should never occur.
+                    outbound_stopping = true;
+                    continue;
+                }
+
                 if (succeeded) {
                     ++counters.successes;
-                    counters.consecutive_failures = 0;
-                    counters.last_success_unix_ms = unix_time_ms();
-                    if (work->item.kind == OutboundMessage::Kind::Raft) {
-                        counters.raft_consecutive_failures = 0;
-                        counters.retry_after = {};
-                    } else {
-                        counters.gossip_consecutive_failures = 0;
-                        counters.gossip_retry_after = {};
-                    }
-                    counters.consecutive_failures = std::max(counters.raft_consecutive_failures,
-                                                              counters.gossip_consecutive_failures);
+                    lifecycle->second.record_success(completed_at, unix_time_ms(), latency_us);
+                    const auto state = lifecycle->second.snapshot(completed_at);
+                    counters.consecutive_failures = state.consecutive_failures;
+                    counters.last_success_unix_ms = state.last_success_unix_ms;
                     counters.last_error.clear();
                     outbound_bytes -= work->item.encoded_size;
                     --outbound_count;
@@ -2470,22 +2487,33 @@ struct NodeServer::Impl {
                         pending_gossip_ids[work->peer_id].erase(work->item.transaction_id);
                         mark_gossip_delivered(work->peer_id, work->item.transaction_id);
                     }
+                } else if (!retryable_failure) {
+                    // The remote endpoint completed an authenticated request
+                    // and returned a terminal application rejection. The
+                    // transport is reachable, so close the circuit while
+                    // counting/dropping the rejected message separately.
+                    ++counters.successes;
+                    lifecycle->second.record_success(completed_at, unix_time_ms(), latency_us);
+                    counters.consecutive_failures = 0;
+                    counters.last_success_unix_ms = unix_time_ms();
+                    counters.last_error = failure.substr(0, 256);
+                    outbound_bytes -= work->item.encoded_size;
+                    --outbound_count;
+                    ++counters.dropped;
+                    ++outbound_dropped;
+                    if (work->item.kind == OutboundMessage::Kind::Transaction) {
+                        outbound_gossip_bytes -= work->item.encoded_size;
+                        --outbound_gossip_count;
+                        pending_gossip_ids[work->peer_id].erase(work->item.transaction_id);
+                        mark_gossip_delivered(work->peer_id, work->item.transaction_id);
+                    }
                 } else {
                     ++counters.failures;
-                    auto& class_failures = work->item.kind == OutboundMessage::Kind::Raft
-                        ? counters.raft_consecutive_failures : counters.gossip_consecutive_failures;
-                    if (class_failures < UINT32_MAX) ++class_failures;
-                    counters.consecutive_failures = std::max(counters.raft_consecutive_failures,
-                                                              counters.gossip_consecutive_failures);
+                    (void)lifecycle->second.record_failure(completed_at, unix_time_ms());
+                    counters.consecutive_failures = lifecycle->second.snapshot(completed_at).consecutive_failures;
                     counters.last_failure_unix_ms = unix_time_ms();
-                    const std::uint32_t shift = std::min<std::uint32_t>(class_failures - 1U, 5U);
-                    const std::uint64_t delay_ms = std::min<std::uint64_t>(250U << shift, 8000U);
-                    const auto retry = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
-                    if (work->item.kind == OutboundMessage::Kind::Raft) counters.retry_after = retry;
-                    else counters.gossip_retry_after = retry;
                     counters.last_error = failure.substr(0, 256);
-
-                    if (outbound_stopping || !endpoint_enabled || !retryable_failure) {
+                    if (outbound_stopping || !endpoint_enabled) {
                         outbound_bytes -= work->item.encoded_size;
                         --outbound_count;
                         ++counters.dropped;
@@ -2494,9 +2522,6 @@ struct NodeServer::Impl {
                             outbound_gossip_bytes -= work->item.encoded_size;
                             --outbound_gossip_count;
                             pending_gossip_ids[work->peer_id].erase(work->item.transaction_id);
-                            if (!retryable_failure) {
-                                mark_gossip_delivered(work->peer_id, work->item.transaction_id);
-                            }
                         }
                     } else {
                         auto& queue = outbound_queues[work->peer_id];
@@ -2528,6 +2553,16 @@ struct NodeServer::Impl {
             peer.host = endpoint.host;
             peer.port = endpoint.port;
             peer.enabled = endpoint.enabled;
+            const auto lifecycle = peer_lifecycle.find(peer_id);
+            PeerLifecycleSnapshot lifecycle_state;
+            if (lifecycle != peer_lifecycle.end()) {
+                lifecycle_state = lifecycle->second.snapshot(now);
+                peer.lifecycle_state = lifecycle_state.state;
+                peer.consecutive_failures = lifecycle_state.consecutive_failures;
+                peer.last_success_unix_ms = lifecycle_state.last_success_unix_ms;
+                peer.last_failure_unix_ms = lifecycle_state.last_failure_unix_ms;
+                peer.retry_delay_ms = lifecycle_state.retry_delay_ms;
+            }
             peer.in_flight = in_flight_peers.contains(peer_id);
             const auto queue = outbound_queues.find(peer_id);
             peer.queued_messages = queue == outbound_queues.end() ? 0U :
@@ -2539,21 +2574,7 @@ struct NodeServer::Impl {
                 peer.successes = counter->second.successes;
                 peer.failures = counter->second.failures;
                 peer.dropped = counter->second.dropped;
-                peer.consecutive_failures = counter->second.consecutive_failures;
-                peer.last_success_unix_ms = counter->second.last_success_unix_ms;
-                peer.last_failure_unix_ms = counter->second.last_failure_unix_ms;
                 peer.last_error = counter->second.last_error;
-                std::optional<std::chrono::steady_clock::time_point> next_retry;
-                for (const auto candidate : {counter->second.retry_after,
-                                             counter->second.gossip_retry_after}) {
-                    if (candidate > now && (!next_retry || candidate < *next_retry)) {
-                        next_retry = candidate;
-                    }
-                }
-                if (next_retry) {
-                    peer.retry_delay_ms = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(*next_retry - now).count());
-                }
             }
             result.peers.push_back(std::move(peer));
         }
@@ -2588,6 +2609,7 @@ struct NodeServer::Impl {
             raft_configuration->consensus.cluster_id, next_generation, candidate);
         raft_endpoints = std::move(candidate);
         endpoint_registry_generation = next_generation;
+        peer_lifecycle.at(peer_id).set_enabled(enabled);
         if (!enabled) {
             auto queue = outbound_queues.find(peer_id);
             if (queue != outbound_queues.end()) {
@@ -2608,10 +2630,6 @@ struct NodeServer::Impl {
             }
         } else {
             peer_counters[peer_id].consecutive_failures = 0;
-            peer_counters[peer_id].raft_consecutive_failures = 0;
-            peer_counters[peer_id].gossip_consecutive_failures = 0;
-            peer_counters[peer_id].retry_after = {};
-            peer_counters[peer_id].gossip_retry_after = {};
             peer_counters[peer_id].last_error.clear();
         }
         outbound_condition.notify_all();
@@ -2648,6 +2666,7 @@ struct NodeServer::Impl {
     std::map<std::string, std::deque<std::string>> delivered_gossip_order;
     std::chrono::steady_clock::time_point last_gossip_scan{};
     std::map<std::string, PeerCounters> peer_counters;
+    std::map<std::string, PeerLifecycle> peer_lifecycle;
     std::set<std::string> in_flight_peers;
     std::string scheduler_cursor;
     std::size_t outbound_count{0};

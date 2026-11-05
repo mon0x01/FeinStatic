@@ -2,7 +2,16 @@
 
 **FeinStatic** is a modular C++20 financial-infrastructure and distributed-systems prototype. It combines a private native-asset Ledger, an off-chain order-matching engine, an automated market maker, shared settlement, a Ledger/settlement bridge, authenticated peer networking, and a crash-fault Raft cluster with snapshot recovery and joint-consensus voter changes.
 
-Release: **1.8.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+Release: **1.9.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+
+## Version 1.9.0 changes
+
+- Adds a peer-level lifecycle supervisor with explicit `UNKNOWN`, `HEALTHY`, `DEGRADED`, `OFFLINE`, `HALF_OPEN`, and `DISABLED` states.
+- Replaces independent Raft/gossip retry gates with one per-peer circuit breaker. A transport failure pauses both classes, preventing one class from repeatedly probing a destination while the other is backing off.
+- Applies capped exponential reconnect backoff (250 ms initial, 30 s maximum) with deterministic peer-specific jitter to reduce synchronized reconnect bursts.
+- Uses the existing one-in-flight-per-peer rule as the half-open probe: after the cooldown, only one operation can test recovery; success closes the breaker and failure reopens it.
+- Tracks smoothed peer round-trip latency internally and exposes lifecycle state through the operator-only peer-health response/CLI without changing the protocol-v8 response encoding.
+- Keeps the authenticated wire protocol v8 and SQLite schema unchanged; endpoint enable/disable remains operator-managed and Raft membership remains joint-consensus controlled.
 
 ## Version 1.8.0 changes
 
@@ -17,7 +26,7 @@ Release: **1.8.0**. The terminal application is line-oriented. This is education
 
 - Adds global and per-address token-bucket admission before peer handshake parsing, with bounded address tracking and idle expiry.
 - Adds automatic transaction gossip across enabled, pre-provisioned Raft members and learners. The durable mempool is the recovery source after restart; bounded queue backpressure is handled by periodic refill.
-- Refactors outbound dispatch into separate bounded Raft and gossip queues, reserves capacity for consensus, applies an eight-message Raft priority streak to prevent permanent gossip starvation, and uses independent retry timers.
+- Refactors outbound dispatch into separate bounded Raft and gossip queues, reserves capacity for consensus, applies an eight-message Raft priority streak to prevent permanent gossip starvation, and uses one per-peer breaker with bounded recovery backoff.
 - Fixes retry semantics: a failed retryable message is requeued at the head of its peer queue and its in-flight capacity remains reserved until delivery or terminal rejection.
 - Adds authenticated multi-process TCP tests for inbound rate limiting and transaction dissemination through origin restart with receivers offline.
 - Upgrades the authenticated peer wire protocol to v8. The SQLite schema is unchanged.

@@ -1749,6 +1749,17 @@ FS_TEST(raft_transaction_gossip_retries_after_destination_reconnects_without_ori
             const auto peer = std::find_if(report.peers.begin(), report.peers.end(),
                 [&](const RaftPeerHealth& value) { return value.peer_id == cluster.member_id(1); });
             if (peer != report.peers.end() && peer->failures > 0 && peer->queued_messages > 0) {
+                FS_REQUIRE(peer->lifecycle_state == PeerLifecycleState::Degraded ||
+                           peer->lifecycle_state == PeerLifecycleState::Offline);
+                FS_REQUIRE(peer->retry_delay_ms > 0);
+                const auto attempts_before = peer->attempts;
+                const auto wait_ms = std::max<std::uint64_t>(1U, peer->retry_delay_ms / 2U);
+                std::this_thread::sleep_for(std::chrono::milliseconds(wait_ms));
+                const auto during_backoff = cluster.peer_health(0);
+                const auto during_peer = std::find_if(during_backoff.peers.begin(), during_backoff.peers.end(),
+                    [&](const RaftPeerHealth& value) { return value.peer_id == cluster.member_id(1); });
+                FS_REQUIRE(during_peer != during_backoff.peers.end());
+                FS_REQUIRE(during_peer->attempts == attempts_before);
                 retry_retained = true;
                 break;
             }
@@ -1774,6 +1785,19 @@ FS_TEST(raft_transaction_gossip_retries_after_destination_reconnects_without_ori
     FS_REQUIRE(delivered);
     FS_REQUIRE(cluster.peer_status(2).pending_transactions == 1);
     FS_REQUIRE(cluster.peer_status(0).pending_transactions == 1);
+    const auto healthy_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    bool peer_recovered = false;
+    while (std::chrono::steady_clock::now() < healthy_deadline) {
+        const auto report = cluster.peer_health(0);
+        const auto peer = std::find_if(report.peers.begin(), report.peers.end(),
+            [&](const RaftPeerHealth& value) { return value.peer_id == cluster.member_id(1); });
+        if (peer != report.peers.end() && peer->lifecycle_state == PeerLifecycleState::Healthy) {
+            peer_recovered = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    FS_REQUIRE(peer_recovered);
     remove_network_db(source_path);
 }
 

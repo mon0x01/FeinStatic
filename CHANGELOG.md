@@ -1,3 +1,12 @@
+## 1.9.0
+
+- Add a dedicated peer lifecycle state machine with `UNKNOWN`, `HEALTHY`, `DEGRADED`, `OFFLINE`, `HALF_OPEN`, and `DISABLED` states.
+- Centralize retry gating across Raft RPC and transaction gossip so both traffic classes respect the same per-peer circuit breaker.
+- Add capped exponential backoff from 250 ms to 30 seconds with stable peer-specific jitter; an expired circuit permits one half-open attempt because the dispatcher already enforces one in-flight operation per peer.
+- Record per-peer success/failure timestamps and smoothed operation latency; render lifecycle state in the operator-only peer health CLI.
+- Add deterministic unit tests for state transitions, backoff bounds/jitter, half-open recovery, disable/enable, and invalid configuration, plus an authenticated TCP retry integration assertion.
+- Keep protocol v8 and the SQLite schema unchanged. Existing endpoint/trust configuration and cluster membership semantics remain compatible.
+
 ## 1.8.0
 
 - Add a fixed-size inbound socket worker pool (default four, maximum sixteen) and bounded pending-connection queue (default 64, maximum 4096).

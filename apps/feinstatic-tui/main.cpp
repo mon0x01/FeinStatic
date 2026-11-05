@@ -1141,6 +1141,7 @@ int raft_peer_health_command(const std::string& database, const std::string& hos
         std::cout << "\n  Peer       : " << item.peer_id << '\n'
                   << "  Endpoint   : " << item.host << ':' << item.port << '\n'
                   << "  Enabled    : " << (item.enabled ? "yes" : "no") << '\n'
+                  << "  Lifecycle  : " << network::peer_lifecycle_state_name(item.lifecycle_state) << '\n'
                   << "  In flight  : " << (item.in_flight ? "yes" : "no") << '\n'
                   << "  Queue      : " << item.queued_messages << '\n'
                   << "  Attempts   : " << item.attempts << '\n'
@@ -1172,7 +1173,7 @@ int raft_peer_endpoint_set_command(const std::string& database, const std::strin
 }
 
 void print_usage(const char* executable) {
-    std::cout << "FeinStatic 1.7.0 — bounded inbound admission and transaction gossip\n\n"
+    std::cout << "FeinStatic 1.9.0 — peer lifecycle supervision and circuit breaking\n\n"
               << "Usage:\n"
               << "  " << executable << " demo                  Run synthetic Ledger/Match/Flow demonstrations\n"
               << "  " << executable << " init [database.db]    Create a new private ledger\n"
@@ -1200,7 +1201,7 @@ void print_usage(const char* executable) {
               << "Raft peers require the same Ledger checkpoint and cluster ID. Pre-provision voters and learners with the same member roster and mutual trust configuration; roles use the optional fourth field in members.txt.\n"
               << "Raft is crash-fault tolerant, not Byzantine fault tolerant. Protocol v8 encrypts application frames but is not TLS.\n"
               << "Protocol v8 adds bounded inbound admission and automatic Raft transaction gossip to X25519/AES-256-GCM sessions.\n"
-              << "v1.7.0 uses separate bounded Raft/gossip queues, consensus-priority fair dispatch, retry requeue, and durable-mempool gossip recovery.\n"
+              << "v1.9.0 adds peer-level circuit breaking, jittered recovery backoff, half-open probing, and operator-visible peer lifecycle states.\n"
               << "Endpoint disable pauses transport to a configured member; it does not remove the member from Raft quorum or membership.\n"
               << "Node identity vaults use PBKDF2-HMAC-SHA256 and AES-256-GCM; legacy raw 0600 identities remain readable.\n";
 }

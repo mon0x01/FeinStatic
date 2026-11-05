@@ -1,10 +1,27 @@
-# FeinStatic peer networking (v1.8.0)
+# FeinStatic peer networking (v1.9.0)
 
 ## Scope
 
 The TCP peer layer provides bounded request/response framing, chain-parameter compatibility checks, transaction relay, legacy block relay/synchronization, and authenticated peer identities. v1.0.0 adds live Raft RPC dispatch and replicated Ledger block application for a fixed permissioned crash-fault cluster. The Raft cluster path is described in detail in [`raft.md`](raft.md) and the three-node lab procedure in [`raft-networking-guide.md`](raft-networking-guide.md).
 
 The legacy non-Raft peer mode remains available for development, but uses deterministic local fork choice rather than distributed consensus. In Raft mode, direct block import and pull-based chain synchronization are disabled to prevent bypassing the replicated log.
+
+## Peer lifecycle supervision and circuit breaking (v1.9.0)
+
+Every configured outbound peer now has a lifecycle state derived from actual authenticated RPC outcomes:
+
+- `UNKNOWN`: no successful operation has completed in the current enabled endpoint epoch.
+- `HEALTHY`: at least one authenticated operation succeeded and there are no consecutive transport failures.
+- `DEGRADED`: one to four consecutive transport failures have occurred.
+- `OFFLINE`: five or more consecutive transport failures have occurred; the breaker is open until its retry deadline.
+- `HALF_OPEN`: the breaker cooldown elapsed and the single allowed in-flight operation is testing recovery.
+- `DISABLED`: an operator disabled the peer endpoint. This is distinct from an unreachable peer.
+
+Raft messages and transaction gossip share one peer-level retry gate. A failure in either traffic class blocks both classes until the same retry deadline; this prevents heartbeat and gossip workers from independently hammering an unavailable endpoint. Backoff starts at 250 ms, doubles per consecutive transport failure, and caps at 30 seconds. A stable peer-ID/failure-generation mix adds up to 20% deterministic jitter so a cluster's peers do not all retry at the same instant. The existing one-in-flight-per-peer scheduler provides the half-open single probe. A successful authenticated exchange closes the breaker and resets the consecutive-failure count. A terminal application-level rejection is counted as a completed transport exchange and does not open the circuit.
+
+The operator-only `raft-peer-health-auth` command now displays the lifecycle state in addition to queue and retry counters. Endpoint enable/disable still requires an active operator and cannot disable a current voter until that voter is demoted through joint consensus. Changing an endpoint resets its current lifecycle epoch; it does not alter membership or trust.
+
+The state machine is process-local. It does not persist health history across restart; after restart a configured endpoint begins `UNKNOWN` and its queues are reconstructed from the durable mempool/Raft state. This deliberately avoids making stale failure history a source of permanent unavailability. There is no automatic peer discovery or automatic trust enrollment.
 
 ## Bounded inbound I/O workers (v1.8.0)
 
@@ -86,7 +103,7 @@ The outbound dispatcher also periodically scans the durable mempool and refills 
 
 The accept loop applies token-bucket admission and then queues accepted sockets. Bounded inbound workers handle handshake and request-frame I/O concurrently. Every operation that reads or mutates Ledger, Raft, trust-policy, or endpoint state is serialized by the per-node state mutex, while response bytes are written after releasing it. The per-address bucket map is bounded by `maximum_tracked_addresses`; idle entries expire after `address_idle_expiry`. `InboundAdmissionConfig` exposes global/per-address refill rates and burst sizes, and Raft mode reads it from `RaftNetworkConfig::inbound_admission`. Defaults are deliberately generous for a busy nine-member private cluster; operators should tune them to the expected source-IP topology. The admission gate and bounded worker queue limit local connection work but do not protect upstream bandwidth or constitute a full DDoS defense.
 
-Outbound Raft RPCs and transaction gossip use a fixed-size shared worker pool (default four, maximum eight), not one thread per peer. Each peer has separate bounded FIFO queues for Raft and gossip, one in-flight message per peer, and reserved capacity so gossip cannot consume the configured Raft queue budget. Raft messages receive priority, but an eight-message streak limit prevents permanent gossip starvation. Retries have independent capped exponential backoff. Retryable failures are requeued at the head of the same per-peer queue while the in-flight capacity reservation is retained; permanent transaction rejection is terminal. Stale heartbeat work can be coalesced or dropped under pressure.
+Outbound Raft RPCs and transaction gossip use a fixed-size shared worker pool (default four, maximum eight), not one thread per peer. Each peer has separate bounded FIFO queues for Raft and gossip, one in-flight message per peer, and reserved capacity so gossip cannot consume the configured Raft queue budget. Raft messages receive priority, but an eight-message streak limit prevents permanent gossip starvation. Raft and gossip share one peer-level circuit breaker with capped exponential backoff and stable peer-specific jitter. Retryable failures are requeued at the head of the same per-peer queue while the in-flight capacity reservation is retained; permanent transaction rejection is terminal. Stale heartbeat work can be coalesced or dropped under pressure.
 
 Committed block application persists the Ledger block append, durable mempool reconciliation, and Raft `last_applied` snapshot in one SQLite transaction. In-memory state is published only after commit. On restart, the adapter verifies the persisted applied log against the recovered Ledger chain.
 
@@ -98,4 +115,4 @@ The legacy authenticated `node-listen-auth`, `peer-status-auth`, `peer-sync-auth
 
 ## Remaining work and explicit limits
 
-Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket admission and automatic best-effort transaction gossip; v1.8.0 adds bounded concurrent inbound I/O while preserving serialized state access. These controls are not an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.
+Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket admission and automatic best-effort transaction gossip; v1.8.0 adds bounded concurrent inbound I/O while preserving serialized state access; v1.9.0 adds peer lifecycle states and a unified retry circuit breaker. These controls are not an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.

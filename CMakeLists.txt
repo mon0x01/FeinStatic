@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(FeinStatic VERSION 1.8.0 LANGUAGES CXX)
+project(FeinStatic VERSION 1.9.0 LANGUAGES CXX)
 
 option(FEINSTATIC_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(FEINSTATIC_ENABLE_THREAD_SANITIZER "Enable ThreadSanitizer for concurrency/race validation" OFF)
@@ -34,6 +34,7 @@ add_library(feinstatic_core
     src/platform/financial_platform.cpp
     src/bridge/bridge_service.cpp
     src/network/node.cpp
+    src/network/peer_lifecycle.cpp
     src/consensus/fork_choice.cpp
     src/consensus/raft.cpp
     src/consensus/raft_membership.cpp
@@ -98,6 +99,7 @@ if(FEINSTATIC_BUILD_TESTS)
         tests/platform_tests.cpp
         tests/bridge_tests.cpp
         tests/network_tests.cpp
+        tests/peer_lifecycle_tests.cpp
         tests/consensus_tests.cpp
         tests/raft_tests.cpp
         tests/raft_membership_tests.cpp

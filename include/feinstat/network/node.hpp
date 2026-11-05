@@ -3,6 +3,7 @@
 #include "feinstat/consensus/raft_ledger_adapter.hpp"
 #include "feinstat/ledger/ledger.hpp"
 #include "feinstat/network/peer_identity.hpp"
+#include "feinstat/network/peer_lifecycle.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -52,6 +53,7 @@ struct RaftPeerEndpoint {
 
 struct RaftPeerHealth {
     std::string peer_id;
+    PeerLifecycleState lifecycle_state{PeerLifecycleState::Unknown};
     std::string host;
     std::uint16_t port{0};
     bool enabled{true};
@@ -114,6 +116,7 @@ struct RaftNetworkConfig {
     // the capacity reserved for Raft control traffic.
     std::size_t maximum_queued_gossip_messages_per_peer{64};
     InboundAdmissionConfig inbound_admission{};
+    PeerLifecycleConfig peer_lifecycle{};
 };
 
 struct RaftPeerStatus {
