@@ -48,6 +48,16 @@ Bytes RaftStateStore::load_snapshot(std::uint64_t snapshot_index) const {
     return *payload;
 }
 
+Bytes RaftStateStore::read_snapshot_chunk(
+    std::uint64_t snapshot_index, std::uint64_t offset, std::size_t maximum_bytes) const {
+    return store_.read_raft_snapshot_chunk(snapshot_index, offset, maximum_bytes);
+}
+
+Bytes RaftStateStore::read_snapshot_staging_chunk(
+    std::uint64_t offset, std::size_t maximum_bytes) const {
+    return store_.read_raft_snapshot_staging_chunk(offset, maximum_bytes);
+}
+
 std::optional<RaftSnapshotTransfer> RaftStateStore::load_snapshot_staging() const {
     return store_.load_raft_snapshot_staging();
 }

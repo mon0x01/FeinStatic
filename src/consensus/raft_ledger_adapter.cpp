@@ -52,7 +52,13 @@ RaftLedgerAdapter::RaftLedgerAdapter(
         [this](const RaftSnapshotTransfer& transfer, std::uint64_t offset, const Bytes& chunk) {
             store_.append_snapshot_staging_chunk(transfer, offset, chunk);
         },
-        [this] { store_.clear_snapshot_staging(); });
+        [this] { store_.clear_snapshot_staging(); },
+        [this](std::uint64_t index, std::uint64_t offset, std::size_t maximum) {
+            return store_.read_snapshot_chunk(index, offset, maximum);
+        },
+        [this](std::uint64_t offset, std::size_t maximum) {
+            return store_.read_snapshot_staging_chunk(offset, maximum);
+        });
     validate_recovered_ledger();
     (void)apply_committed();
 }

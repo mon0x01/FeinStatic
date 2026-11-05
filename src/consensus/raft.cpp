@@ -488,7 +488,9 @@ RaftNode::RaftNode(RaftConfig config,
                    RaftSnapshotInstallCallback install_snapshot_callback,
                    RaftSnapshotStageLoadCallback load_snapshot_stage_callback,
                    RaftSnapshotStageSaveCallback save_snapshot_stage_callback,
-                   RaftSnapshotStageClearCallback clear_snapshot_stage_callback)
+                   RaftSnapshotStageClearCallback clear_snapshot_stage_callback,
+                   RaftSnapshotChunkReadCallback read_snapshot_chunk_callback,
+                   RaftSnapshotStageChunkReadCallback read_snapshot_stage_chunk_callback)
     : config_(std::move(config)),
       persist_callback_(std::move(persist_callback)),
       read_snapshot_callback_(std::move(read_snapshot_callback)),
@@ -496,7 +498,9 @@ RaftNode::RaftNode(RaftConfig config,
       install_snapshot_callback_(std::move(install_snapshot_callback)),
       load_snapshot_stage_callback_(std::move(load_snapshot_stage_callback)),
       save_snapshot_stage_callback_(std::move(save_snapshot_stage_callback)),
-      clear_snapshot_stage_callback_(std::move(clear_snapshot_stage_callback)) {
+      clear_snapshot_stage_callback_(std::move(clear_snapshot_stage_callback)),
+      read_snapshot_chunk_callback_(std::move(read_snapshot_chunk_callback)),
+      read_snapshot_stage_chunk_callback_(std::move(read_snapshot_stage_chunk_callback)) {
     validate_id(config_.node_id, "node ID");
     validate_id(config_.cluster_id, "cluster ID");
     if (config_.members.size() < 3 || config_.members.size() > kRaftMaximumMembers ||
@@ -596,7 +600,7 @@ RaftNode::RaftNode(RaftConfig config,
                 staged->snapshot_index == 0 || staged->snapshot_term == 0 ||
                 staged->snapshot_term > state_.current_term || staged->total_size == 0 ||
                 staged->total_size > kRaftMaximumSnapshotBytes || staged->payload.size() > staged->total_size ||
-                staged->membership.size() > 8192U) {
+                staged->next_offset > staged->total_size || staged->membership.size() > 8192U) {
                 throw std::runtime_error("durable incoming Raft snapshot staging metadata is invalid");
             }
             if (staged->snapshot_index <= state_.commit_index) {
@@ -609,10 +613,10 @@ RaftNode::RaftNode(RaftConfig config,
                 incoming_snapshot_hash_ = staged->checksum;
                 incoming_snapshot_membership_ = staged->membership;
                 incoming_snapshot_buffer_ = staged->payload;
-                if (incoming_snapshot_buffer_.size() == incoming_snapshot_total_size_) {
-                    if (crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
-                        throw std::runtime_error("completed durable incoming Raft snapshot failed its checksum");
-                    }
+                incoming_snapshot_received_offset_ = staged->next_offset != 0
+                    ? staged->next_offset
+                    : static_cast<std::uint64_t>(incoming_snapshot_buffer_.size());
+                if (incoming_snapshot_received_offset_ == incoming_snapshot_total_size_) {
                     complete_incoming_snapshot();
                 }
             }
@@ -845,23 +849,40 @@ RaftMessage RaftNode::make_append_response(const RaftMessage& request, bool succ
 
 RaftMessage RaftNode::make_snapshot_request(const std::string& peer_id,
                                                     std::uint64_t offset) const {
-    if (!read_snapshot_callback_ || state_.snapshot_index <= config_.checkpoint_height) {
+    if ((!read_snapshot_callback_ && !read_snapshot_chunk_callback_) ||
+        state_.snapshot_index <= config_.checkpoint_height) {
         throw std::logic_error("Raft peer requires a snapshot but no durable snapshot reader is configured");
     }
-    if (outgoing_snapshot_index_ != state_.snapshot_index || outgoing_snapshot_buffer_.empty()) {
-        outgoing_snapshot_buffer_ = read_snapshot_callback_(state_.snapshot_index);
-        if (outgoing_snapshot_buffer_.size() != state_.snapshot_size ||
-            crypto::sha256(outgoing_snapshot_buffer_) != state_.snapshot_hash) {
-            outgoing_snapshot_buffer_.clear();
-            outgoing_snapshot_index_ = 0;
-            throw std::runtime_error("durable Raft application snapshot is missing or failed its checksum");
+    Bytes chunk;
+    if (read_snapshot_chunk_callback_) {
+        if (offset >= state_.snapshot_size) {
+            throw std::out_of_range("Raft snapshot transfer offset is outside the payload");
         }
-        outgoing_snapshot_index_ = state_.snapshot_index;
+        chunk = read_snapshot_chunk_callback_(state_.snapshot_index, offset, kRaftSnapshotChunkBytes);
+        const std::uint64_t remaining = state_.snapshot_size - offset;
+        const std::size_t expected = static_cast<std::size_t>(std::min<std::uint64_t>(
+            kRaftSnapshotChunkBytes, remaining));
+        if (chunk.size() != expected) {
+            throw std::runtime_error("durable Raft snapshot chunk is missing or has an invalid size");
+        }
+    } else {
+        if (outgoing_snapshot_index_ != state_.snapshot_index || outgoing_snapshot_buffer_.empty()) {
+            outgoing_snapshot_buffer_ = read_snapshot_callback_(state_.snapshot_index);
+            if (outgoing_snapshot_buffer_.size() != state_.snapshot_size ||
+                crypto::sha256(outgoing_snapshot_buffer_) != state_.snapshot_hash) {
+                outgoing_snapshot_buffer_.clear();
+                outgoing_snapshot_index_ = 0;
+                throw std::runtime_error("durable Raft application snapshot is missing or failed its checksum");
+            }
+            outgoing_snapshot_index_ = state_.snapshot_index;
+        }
+        const Bytes& payload = outgoing_snapshot_buffer_;
+        if (offset >= payload.size()) throw std::out_of_range("Raft snapshot transfer offset is outside the payload");
+        const std::size_t begin = static_cast<std::size_t>(offset);
+        const std::size_t count = std::min(kRaftSnapshotChunkBytes, payload.size() - begin);
+        chunk.assign(payload.begin() + static_cast<std::ptrdiff_t>(begin),
+                     payload.begin() + static_cast<std::ptrdiff_t>(begin + count));
     }
-    const Bytes& payload = outgoing_snapshot_buffer_;
-    if (offset >= payload.size()) throw std::out_of_range("Raft snapshot transfer offset is outside the payload");
-    const std::size_t begin = static_cast<std::size_t>(offset);
-    const std::size_t count = std::min(kRaftSnapshotChunkBytes, payload.size() - begin);
 
     RaftMessage request;
     request.type = RaftMessageType::InstallSnapshot;
@@ -878,8 +899,7 @@ RaftMessage RaftNode::make_snapshot_request(const std::string& peer_id,
         request.snapshot_membership.size() > 8192U) {
         throw std::length_error("Raft snapshot membership metadata exceeds transfer limit");
     }
-    request.snapshot_chunk.assign(payload.begin() + static_cast<std::ptrdiff_t>(begin),
-                                  payload.begin() + static_cast<std::ptrdiff_t>(begin + count));
+    request.snapshot_chunk = std::move(chunk);
     return request;
 }
 
@@ -965,7 +985,8 @@ std::vector<RaftMessage> RaftNode::receive_snapshot_response(const RaftMessage& 
 }
 
 void RaftNode::clear_incoming_snapshot(bool clear_durable_stage) {
-    const bool had_transfer = incoming_snapshot_index_ != 0 || !incoming_snapshot_buffer_.empty();
+    const bool had_transfer = incoming_snapshot_index_ != 0 || !incoming_snapshot_buffer_.empty() ||
+        incoming_snapshot_received_offset_ != 0;
     if (clear_durable_stage && had_transfer && clear_snapshot_stage_callback_) {
         clear_snapshot_stage_callback_();
     }
@@ -974,18 +995,46 @@ void RaftNode::clear_incoming_snapshot(bool clear_durable_stage) {
     incoming_snapshot_index_ = 0;
     incoming_snapshot_from_.clear();
     incoming_snapshot_total_size_ = 0;
+    incoming_snapshot_received_offset_ = 0;
     incoming_snapshot_term_ = 0;
     incoming_snapshot_hash_ = {};
 }
 
 void RaftNode::complete_incoming_snapshot() {
-    if (incoming_snapshot_index_ == 0 || incoming_snapshot_buffer_.empty() ||
-        incoming_snapshot_buffer_.size() != incoming_snapshot_total_size_ ||
-        crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
-        throw std::runtime_error("incoming Raft snapshot is incomplete or failed its checksum");
+    if (incoming_snapshot_index_ == 0 || incoming_snapshot_received_offset_ != incoming_snapshot_total_size_ ||
+        incoming_snapshot_total_size_ == 0) {
+        throw std::runtime_error("incoming Raft snapshot is incomplete");
     }
     if (!install_snapshot_callback_) {
         throw std::logic_error("Raft snapshot receiver has no atomic application-install callback");
+    }
+
+    // Keep the transfer on disk while it is in flight. Reassemble only once,
+    // at the atomic application-install boundary, rather than duplicating the
+    // entire snapshot in RAM for every received chunk.
+    Bytes payload;
+    if (!incoming_snapshot_buffer_.empty()) {
+        payload = incoming_snapshot_buffer_;
+    } else if (read_snapshot_stage_chunk_callback_) {
+        payload.reserve(static_cast<std::size_t>(incoming_snapshot_total_size_));
+        std::uint64_t offset = 0;
+        while (offset < incoming_snapshot_total_size_) {
+            const std::size_t maximum = static_cast<std::size_t>(std::min<std::uint64_t>(
+                kRaftSnapshotChunkBytes, incoming_snapshot_total_size_ - offset));
+            Bytes chunk = read_snapshot_stage_chunk_callback_(offset, maximum);
+            if (chunk.empty() || chunk.size() > maximum ||
+                chunk.size() > incoming_snapshot_total_size_ - offset) {
+                throw std::runtime_error("durable Raft snapshot staging contains a missing or oversized segment");
+            }
+            offset += static_cast<std::uint64_t>(chunk.size());
+            payload.insert(payload.end(), chunk.begin(), chunk.end());
+        }
+    } else {
+        throw std::logic_error("durable Raft snapshot staging has no range reader");
+    }
+    if (payload.size() != incoming_snapshot_total_size_ || crypto::sha256(payload) != incoming_snapshot_hash_) {
+        clear_incoming_snapshot(true);
+        throw std::runtime_error("incoming Raft snapshot is incomplete or failed its checksum; durable staging was discarded");
     }
 
     RaftPersistentState candidate = state_;
@@ -1016,12 +1065,12 @@ void RaftNode::complete_incoming_snapshot() {
     refresh_membership_from_log(candidate);
     (void)state_body(candidate);
     try {
-        install_snapshot_callback_(candidate, incoming_snapshot_buffer_);
+        install_snapshot_callback_(candidate, payload);
         state_ = std::move(candidate);
         if (clear_snapshot_stage_callback_) clear_snapshot_stage_callback_();
     } catch (...) {
         // The complete transfer remains staged if atomic installation fails.
-        // Startup will retry installation from the durable full payload.
+        // Startup will retry installation from the durable chunks.
         persistence_failed_ = true;
         throw;
     }
@@ -1056,8 +1105,7 @@ std::vector<RaftMessage> RaftNode::receive_install_snapshot(const RaftMessage& m
 
     if (!same_transfer) {
         if (message.snapshot_offset != 0) {
-            const std::uint64_t expected = active_transfer
-                ? static_cast<std::uint64_t>(incoming_snapshot_buffer_.size()) : 0;
+            const std::uint64_t expected = active_transfer ? incoming_snapshot_received_offset_ : 0;
             return {make_snapshot_response(message, false, expected)};
         }
         if (active_transfer) clear_incoming_snapshot(true);
@@ -1068,10 +1116,15 @@ std::vector<RaftMessage> RaftNode::receive_install_snapshot(const RaftMessage& m
         incoming_snapshot_hash_ = message.snapshot_hash;
         incoming_snapshot_membership_ = message.snapshot_membership;
         incoming_snapshot_buffer_.clear();
-        incoming_snapshot_buffer_.reserve(static_cast<std::size_t>(message.snapshot_total_size));
+        incoming_snapshot_received_offset_ = 0;
+        if (!save_snapshot_stage_callback_) {
+            incoming_snapshot_buffer_.reserve(static_cast<std::size_t>(message.snapshot_total_size));
+        }
     }
 
-    const std::uint64_t expected_offset = static_cast<std::uint64_t>(incoming_snapshot_buffer_.size());
+    const std::uint64_t expected_offset = save_snapshot_stage_callback_
+        ? incoming_snapshot_received_offset_
+        : static_cast<std::uint64_t>(incoming_snapshot_buffer_.size());
     if (message.snapshot_offset != expected_offset) {
         return {make_snapshot_response(message, false, expected_offset)};
     }
@@ -1097,13 +1150,19 @@ std::vector<RaftMessage> RaftNode::receive_install_snapshot(const RaftMessage& m
             throw;
         }
     }
-    incoming_snapshot_buffer_.insert(incoming_snapshot_buffer_.end(),
-                                     message.snapshot_chunk.begin(), message.snapshot_chunk.end());
-    const std::uint64_t next_offset = static_cast<std::uint64_t>(incoming_snapshot_buffer_.size());
+    if (save_snapshot_stage_callback_) {
+        incoming_snapshot_received_offset_ = expected_offset +
+            static_cast<std::uint64_t>(message.snapshot_chunk.size());
+    } else {
+        incoming_snapshot_buffer_.insert(incoming_snapshot_buffer_.end(),
+                                         message.snapshot_chunk.begin(), message.snapshot_chunk.end());
+        incoming_snapshot_received_offset_ = static_cast<std::uint64_t>(incoming_snapshot_buffer_.size());
+    }
+    const std::uint64_t next_offset = incoming_snapshot_received_offset_;
     if (next_offset < incoming_snapshot_total_size_) {
         return {make_snapshot_response(message, true, next_offset)};
     }
-    if (crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
+    if (!save_snapshot_stage_callback_ && crypto::sha256(incoming_snapshot_buffer_) != incoming_snapshot_hash_) {
         clear_incoming_snapshot(true);
         return {make_snapshot_response(message, false, 0)};
     }

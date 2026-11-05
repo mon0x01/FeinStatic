@@ -85,11 +85,16 @@ public:
                                                 std::uint64_t expected_revision);
     void save_raft_snapshot(std::uint64_t snapshot_index, const Bytes& payload);
     [[nodiscard]] std::optional<Bytes> load_raft_snapshot(std::uint64_t snapshot_index) const;
+    [[nodiscard]] Bytes read_raft_snapshot_chunk(std::uint64_t snapshot_index,
+                                                 std::uint64_t offset,
+                                                 std::size_t maximum_bytes) const;
     void prune_raft_snapshots_before(std::uint64_t snapshot_index);
     // Durably stage InstallSnapshot chunks before acknowledging their offsets.
     // A single transfer is staged per node; a new metadata tuple replaces the
     // old partial transfer only when its first chunk (offset zero) arrives.
     [[nodiscard]] std::optional<consensus::RaftSnapshotTransfer> load_raft_snapshot_staging() const;
+    [[nodiscard]] Bytes read_raft_snapshot_staging_chunk(std::uint64_t offset,
+                                                         std::size_t maximum_bytes) const;
     void append_raft_snapshot_staging_chunk(const consensus::RaftSnapshotTransfer& transfer,
                                              std::uint64_t offset,
                                              const Bytes& chunk);

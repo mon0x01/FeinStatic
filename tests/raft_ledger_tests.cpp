@@ -198,6 +198,20 @@ FS_TEST(raft_snapshot_chunk_staging_survives_restart_and_recovers_after_install_
         payload[i] = static_cast<Byte>((i * 131U + 17U) & 0xffU);
     }
     const Hash checksum = crypto::sha256(payload);
+    // The leader's send path must be able to read a bounded range directly
+    // from the durable SQLite BLOB without materializing the whole snapshot.
+    {
+        RaftStateStore range_store(path);
+        range_store.save_snapshot(42, payload);
+        const Bytes first_range = range_store.read_snapshot_chunk(42, 0, 512U * 1024U);
+        const Bytes second_range = range_store.read_snapshot_chunk(42, 512U * 1024U, 512U * 1024U);
+        FS_REQUIRE(first_range.size() == 512U * 1024U);
+        FS_REQUIRE(second_range.size() == payload.size() - first_range.size());
+        Bytes reconstructed = first_range;
+        reconstructed.insert(reconstructed.end(), second_range.begin(), second_range.end());
+        FS_REQUIRE(reconstructed == payload);
+        FS_REQUIRE_THROWS(range_store.read_snapshot_chunk(42, payload.size(), 1));
+    }
     constexpr std::size_t first_chunk_size = 512U * 1024U;
     Bytes first_chunk(payload.begin(), payload.begin() + static_cast<std::ptrdiff_t>(first_chunk_size));
     Bytes second_chunk(payload.begin() + static_cast<std::ptrdiff_t>(first_chunk_size), payload.end());
@@ -223,7 +237,11 @@ FS_TEST(raft_snapshot_chunk_staging_survives_restart_and_recovers_after_install_
             [&store](const RaftSnapshotTransfer& transfer, std::uint64_t offset, const Bytes& chunk) {
                 store.append_snapshot_staging_chunk(transfer, offset, chunk);
             },
-            [&store] { store.clear_snapshot_staging(); });
+            [&store] { store.clear_snapshot_staging(); },
+            RaftSnapshotChunkReadCallback{},
+            [&store](std::uint64_t offset, std::size_t maximum) {
+                return store.read_snapshot_staging_chunk(offset, maximum);
+            });
     };
 
     RaftMessage first;
@@ -248,7 +266,9 @@ FS_TEST(raft_snapshot_chunk_staging_survives_restart_and_recovers_after_install_
         FS_REQUIRE(response.front().snapshot_offset == first_chunk_size);
         const auto staged = store.load_snapshot_staging();
         FS_REQUIRE(staged.has_value());
-        FS_REQUIRE(staged->payload == first_chunk);
+        FS_REQUIRE(staged->payload.empty());
+        FS_REQUIRE(staged->next_offset == first_chunk_size);
+        FS_REQUIRE(store.read_snapshot_staging_chunk(0, first_chunk_size) == first_chunk);
     }
 
     // Simulate a receiver restart. The sender also starts from offset zero;
@@ -267,8 +287,13 @@ FS_TEST(raft_snapshot_chunk_staging_survives_restart_and_recovers_after_install_
         FS_REQUIRE_THROWS(receiver->receive(final_chunk));
         const auto staged = store.load_snapshot_staging();
         FS_REQUIRE(staged.has_value());
-        FS_REQUIRE(staged->payload == payload);
-        FS_REQUIRE(staged->payload.size() == staged->total_size);
+        FS_REQUIRE(staged->payload.empty());
+        FS_REQUIRE(staged->next_offset == payload.size());
+        Bytes recovered_payload = store.read_snapshot_staging_chunk(0, first_chunk_size);
+        const Bytes recovered_second = store.read_snapshot_staging_chunk(first_chunk_size, second_chunk.size());
+        recovered_payload.insert(recovered_payload.end(), recovered_second.begin(), recovered_second.end());
+        FS_REQUIRE(recovered_payload == payload);
+        FS_REQUIRE(recovered_payload.size() == staged->total_size);
     }
 
     // Crash after the final chunk was committed to SQLite but before the

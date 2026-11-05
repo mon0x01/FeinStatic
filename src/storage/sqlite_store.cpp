@@ -866,6 +866,37 @@ std::optional<Bytes> SqliteStore::load_raft_snapshot(std::uint64_t snapshot_inde
     return payload;
 }
 
+Bytes SqliteStore::read_raft_snapshot_chunk(
+    std::uint64_t snapshot_index, std::uint64_t offset, std::size_t maximum_bytes) const {
+    constexpr std::size_t maximum_chunk = 512U * 1024U;
+    if (snapshot_index == 0 || snapshot_index > static_cast<std::uint64_t>(INT64_MAX) ||
+        offset > static_cast<std::uint64_t>(INT_MAX) || maximum_bytes == 0 ||
+        maximum_bytes > maximum_chunk) {
+        throw std::invalid_argument("Raft snapshot range read is outside configured bounds");
+    }
+
+    sqlite3_blob* blob = nullptr;
+    const int open_result = sqlite3_blob_open(db_, "main", "raft_snapshots", "payload",
+        static_cast<sqlite3_int64>(snapshot_index), 0, &blob);
+    if (open_result != SQLITE_OK) {
+        check_sqlite(open_result, db_, "open Raft snapshot payload for incremental read");
+    }
+    const int blob_size = sqlite3_blob_bytes(blob);
+    if (blob_size <= 0 || offset >= static_cast<std::uint64_t>(blob_size)) {
+        sqlite3_blob_close(blob);
+        throw std::out_of_range("Raft snapshot range read starts outside the durable payload");
+    }
+    const std::size_t count = std::min(maximum_bytes,
+        static_cast<std::size_t>(blob_size) - static_cast<std::size_t>(offset));
+    Bytes result(count);
+    const int read_result = sqlite3_blob_read(blob, result.data(), static_cast<int>(count),
+        static_cast<int>(offset));
+    const int close_result = sqlite3_blob_close(blob);
+    check_sqlite(read_result, db_, "read Raft snapshot payload range");
+    check_sqlite(close_result, db_, "close Raft snapshot incremental reader");
+    return result;
+}
+
 void SqliteStore::prune_raft_snapshots_before(std::uint64_t snapshot_index) {
     if (snapshot_index == 0 || snapshot_index > static_cast<std::uint64_t>(INT64_MAX)) {
         throw std::invalid_argument("Raft snapshot pruning index is outside SQLite storage range");
@@ -907,30 +938,52 @@ std::optional<consensus::RaftSnapshotTransfer> SqliteStore::load_raft_snapshot_s
     transfer.total_size = static_cast<std::uint64_t>(total);
     transfer.checksum = fixed_column_blob<32>(metadata.get(), 4);
     transfer.membership = column_blob(metadata.get(), 5);
+    transfer.next_offset = static_cast<std::uint64_t>(next);
     if (transfer.membership.size() > 8192U) {
         throw std::runtime_error("Raft snapshot staging membership metadata is oversized");
     }
 
-    Statement chunks(db_, "SELECT chunk_offset, payload FROM raft_snapshot_staging_chunks ORDER BY chunk_offset;");
+    // Validate continuity with metadata only. Never materialize the staged
+    // snapshot payload while recovering transfer state after a process restart.
+    Statement chunks(db_, "SELECT chunk_offset, length(payload) FROM raft_snapshot_staging_chunks ORDER BY chunk_offset;");
     std::uint64_t expected_offset = 0;
     while (true) {
         const int chunk_step = sqlite3_step(chunks.get());
         if (chunk_step == SQLITE_DONE) break;
-        check_sqlite(chunk_step, db_, "read Raft snapshot staging chunk");
+        check_sqlite(chunk_step, db_, "inspect Raft snapshot staging segment");
         const sqlite3_int64 stored_offset = sqlite3_column_int64(chunks.get(), 0);
-        const Bytes chunk = column_blob(chunks.get(), 1);
+        const sqlite3_int64 stored_size = sqlite3_column_int64(chunks.get(), 1);
         if (stored_offset < 0 || static_cast<std::uint64_t>(stored_offset) != expected_offset ||
-            chunk.empty() || chunk.size() > 512U * 1024U ||
-            chunk.size() > transfer.total_size - expected_offset) {
-            throw std::runtime_error("Raft snapshot staging chunks are not contiguous or exceed bounds");
+            stored_size <= 0 || stored_size > 512 * 1024 ||
+            static_cast<std::uint64_t>(stored_size) > transfer.total_size - expected_offset) {
+            throw std::runtime_error("Raft snapshot staging segments are not contiguous or exceed bounds");
         }
-        transfer.payload.insert(transfer.payload.end(), chunk.begin(), chunk.end());
-        expected_offset += static_cast<std::uint64_t>(chunk.size());
+        expected_offset += static_cast<std::uint64_t>(stored_size);
     }
-    if (expected_offset != static_cast<std::uint64_t>(next)) {
-        throw std::runtime_error("Raft snapshot staging offset does not match durable chunk contents");
+    if (expected_offset != transfer.next_offset) {
+        throw std::runtime_error("Raft snapshot staging offset does not match durable segment metadata");
     }
     return transfer;
+}
+
+Bytes SqliteStore::read_raft_snapshot_staging_chunk(
+    std::uint64_t offset, std::size_t maximum_bytes) const {
+    constexpr std::size_t maximum_chunk = 512U * 1024U;
+    if (offset > static_cast<std::uint64_t>(INT64_MAX) || maximum_bytes == 0 ||
+        maximum_bytes > maximum_chunk) {
+        throw std::invalid_argument("Raft snapshot staging range read is outside configured bounds");
+    }
+    Statement query(db_, "SELECT payload FROM raft_snapshot_staging_chunks WHERE chunk_offset=?1;");
+    check_sqlite(sqlite3_bind_int64(query.get(), 1, static_cast<sqlite3_int64>(offset)),
+                 db_, "bind Raft snapshot staging read offset");
+    const int step = sqlite3_step(query.get());
+    if (step == SQLITE_DONE) throw std::out_of_range("Raft snapshot staging segment is missing");
+    check_sqlite(step, db_, "read Raft snapshot staging segment");
+    Bytes result = column_blob(query.get(), 0);
+    if (result.empty() || result.size() > maximum_bytes) {
+        throw std::runtime_error("Raft snapshot staging segment has an invalid size");
+    }
+    return result;
 }
 
 void SqliteStore::append_raft_snapshot_staging_chunk(

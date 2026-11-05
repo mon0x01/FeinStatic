@@ -83,6 +83,9 @@ struct RaftSnapshotTransfer {
     std::uint64_t total_size{0};
     Hash checksum{};
     Bytes membership;
+    // Durable prefix size. Payload bytes stay in the storage layer during transfer.
+    std::uint64_t next_offset{0};
+    // Optional in-memory fallback for non-SQLite test/custom stores.
     Bytes payload;
 };
 
@@ -141,6 +144,8 @@ using RaftSnapshotStageLoadCallback = std::function<std::optional<RaftSnapshotTr
 using RaftSnapshotStageSaveCallback = std::function<void(
     const RaftSnapshotTransfer&, std::uint64_t, const Bytes&)>;
 using RaftSnapshotStageClearCallback = std::function<void()>;
+using RaftSnapshotChunkReadCallback = std::function<Bytes(std::uint64_t, std::uint64_t, std::size_t)>;
+using RaftSnapshotStageChunkReadCallback = std::function<Bytes(std::uint64_t, std::size_t)>;
 
 // A deterministic, crash-fault-tolerant Raft state machine. The operator
 // pre-provisions endpoints/trust for voters and learners. Membership changes
@@ -157,7 +162,9 @@ public:
              RaftSnapshotInstallCallback install_snapshot = {},
              RaftSnapshotStageLoadCallback load_snapshot_stage = {},
              RaftSnapshotStageSaveCallback save_snapshot_stage = {},
-             RaftSnapshotStageClearCallback clear_snapshot_stage = {});
+             RaftSnapshotStageClearCallback clear_snapshot_stage = {},
+             RaftSnapshotChunkReadCallback read_snapshot_chunk = {},
+             RaftSnapshotStageChunkReadCallback read_snapshot_stage_chunk = {});
 
     [[nodiscard]] std::vector<RaftMessage> tick(std::chrono::milliseconds elapsed);
     [[nodiscard]] std::vector<RaftMessage> receive(const RaftMessage& message);
@@ -234,6 +241,8 @@ private:
     RaftSnapshotStageLoadCallback load_snapshot_stage_callback_;
     RaftSnapshotStageSaveCallback save_snapshot_stage_callback_;
     RaftSnapshotStageClearCallback clear_snapshot_stage_callback_;
+    RaftSnapshotChunkReadCallback read_snapshot_chunk_callback_;
+    RaftSnapshotStageChunkReadCallback read_snapshot_stage_chunk_callback_;
     RaftRole role_{RaftRole::Follower};
     std::string leader_id_;
     std::map<std::string, bool> votes_received_;
@@ -243,6 +252,7 @@ private:
     std::uint64_t incoming_snapshot_index_{0};
     std::uint64_t incoming_snapshot_term_{0};
     std::uint64_t incoming_snapshot_total_size_{0};
+    std::uint64_t incoming_snapshot_received_offset_{0};
     Hash incoming_snapshot_hash_{};
     Bytes incoming_snapshot_membership_;
     Bytes incoming_snapshot_buffer_;
