@@ -2,7 +2,15 @@
 
 **FeinStatic** is a modular C++20 financial-infrastructure and distributed-systems prototype. It combines a private native-asset Ledger, an off-chain order-matching engine, an automated market maker, shared settlement, a Ledger/settlement bridge, authenticated peer networking, and a crash-fault Raft cluster with snapshot recovery and joint-consensus voter changes.
 
-Release: **2.0.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+Release: **2.1.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+
+## Version 2.1.0 changes
+
+- Changes leader-side Raft snapshot transmission to read each 512 KiB segment directly from the durable SQLite snapshot BLOB using SQLite incremental BLOB I/O. The sender no longer caches the entire outgoing snapshot in its process memory.
+- Changes receiver staging recovery to load only transfer metadata and inspect segment offsets/lengths. The receiver no longer rebuilds the complete staged payload in memory when the process starts.
+- During transfer, each accepted segment remains durable in SQLite before its offset is acknowledged; the live transfer state tracks only the durable next offset. The full payload is assembled once at the atomic Ledger/Raft install boundary, then checksum-validated before installation.
+- Keeps protocol v8, schema v6, the 512 KiB segment size, and the existing 64 MiB snapshot cap. Existing databases require no migration.
+- This is a bounded-memory *transport* improvement, not yet a state-only Ledger snapshot: the current install path still materializes the complete snapshot and replays full Ledger history. See the v2.1 verification report and Raft limitations.
 
 ## Version 2.0.0 changes
 

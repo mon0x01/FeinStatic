@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(FeinStatic VERSION 2.0.0 LANGUAGES CXX)
+project(FeinStatic VERSION 2.1.0 LANGUAGES CXX)
 
 option(FEINSTATIC_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(FEINSTATIC_ENABLE_THREAD_SANITIZER "Enable ThreadSanitizer for concurrency/race validation" OFF)
