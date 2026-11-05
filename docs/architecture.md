@@ -1,4 +1,4 @@
-# FeinStatic architecture (v1.3.0)
+# FeinStatic architecture (v1.7.0)
 
 ## Overview
 
@@ -13,7 +13,7 @@ The major boundaries are:
 - **FinancialPlatform:** shared candidate-state boundary coordinating Match and Flow through one SettlementBook and one persisted platform snapshot.
 - **BridgeService:** recoverable native-FST workflow between the private Ledger and off-chain SettlementBook.
 - **Storage:** SQLite schema/migrations, block/wallet rows, durable mempool, financial snapshots, and Raft state.
-- **Network:** bounded TCP framing, independent Ed25519 node identities, explicit trust stores, session-authenticated messages, and Raft RPC dispatch.
+- **Network:** bounded TCP framing, independent Ed25519 node identities, explicit trust stores, encrypted authenticated sessions, inbound token-bucket admission, and shared Raft/transaction-gossip dispatch.
 - **Consensus:** transport-agnostic Raft kernel plus `RaftLedgerAdapter`, which maps committed log commands to Ledger block application.
 
 ## State ownership and financial units
@@ -48,9 +48,9 @@ The Raft state binds the configured cluster ID, sorted membership fingerprint, a
 
 ## TCP peer networking
 
-The request/response protocol is bounded and uses wire version 6. Every authenticated connection performs Ed25519 mutual challenge-response and binds both ephemeral X25519 public keys into the signed session transcript. HKDF-SHA-256 derives directional AES-256-GCM keys; every post-handshake application frame is encrypted and authenticated with session/type/sequence associated data, and also signed over its ciphertext. This supplies peer authentication, integrity, confidentiality for application payloads, and replay resistance. It is not TLS and does not hide transport metadata.
+The request/response protocol is bounded and uses wire version 8. Every authenticated connection performs Ed25519 mutual challenge-response and binds both ephemeral X25519 public keys into the signed session transcript. HKDF-SHA-256 derives directional AES-256-GCM keys; every post-handshake application frame is encrypted and authenticated with session/type/sequence associated data, and also signed over its ciphertext. This supplies peer authentication, integrity, confidentiality for application payloads, and replay resistance. It is not TLS and does not hide transport metadata.
 
-The server accepts one inbound request at a time on its serialized event loop. Ledger and Raft state-machine operations remain single-writer/single-thread-affine. In Raft mode, a fixed-size shared outbound worker pool schedules one in-flight RPC per remote peer, preserving per-destination order while allowing workers to serve other peers. Global and per-peer queues are bounded; stale heartbeat work can be coalesced or dropped under pressure, and failed sends use capped exponential retry backoff. Operator health reports expose queue and failure counters. The inbound event loop and Ledger/Raft state transitions remain serialized.
+The server accepts and processes one inbound request at a time on its serialized event loop. Before handshake parsing, each accepted socket consumes a token from global and per-address token buckets; the address table is bounded and expires idle entries. Ledger and Raft state-machine operations remain single-writer/single-thread-affine. In Raft mode, a fixed-size shared outbound worker pool dispatches separate bounded per-peer queues for consensus RPCs and best-effort transaction gossip. Raft traffic has priority with an eight-message streak limit to prevent permanent gossip starvation. Each peer has at most one in-flight message, preserving FIFO within each traffic class. Retryable failures are requeued at the head with capacity accounting retained; Raft and gossip maintain independent capped exponential backoff. A periodic durable-mempool scan reconstructs gossip after restart and relieves bounded queue backpressure. Operator health reports expose combined queue and failure counters.
 
 ## Raft runtime and Ledger application
 
@@ -68,10 +68,10 @@ The v0.9.0 Raft kernel remains a static, permissioned crash-fault state machine.
 
 Raft log indices and Ledger block heights are not interchangeable: no-op entries consume log indices without creating blocks. This matters when observing `commit_index`, `last_applied`, and Ledger height.
 
-In Raft mode, direct legacy block submission and legacy pull-based chain synchronization are disabled so they cannot mutate a member's canonical chain outside consensus. Transactions can be admitted to a member's local durable mempool, but transaction gossip is not automatic; submit pending transactions to the current leader before proposing a block.
+In Raft mode, direct legacy block submission and legacy pull-based chain synchronization are disabled so they cannot mutate a member's canonical chain outside consensus. Transactions can be admitted to any member's durable mempool and are gossiped best-effort to other enabled, pre-provisioned members. Gossip dissemination is not consensus: a transaction becomes canonical only after leader proposal, majority commitment, and ordered application.
 
 ## Cluster and fault assumptions
 
-Raft voter membership is odd-sized (3, 5, 7, or 9) and can change through the two-entry joint-consensus transition. A shared, pre-provisioned roster may contain up to nine voter/learner endpoints; learners replicate but do not vote, and must catch up to the committed index before promotion. Every node shares the exact initial roster, cluster ID, Ledger checkpoint, and compatible chain parameters. Each member owns a database and trusts the other provisioned identities. The implementation models crash/recovery failures with non-Byzantine members. v1.2.0 compacts applied log prefixes and transfers bounded full-Ledger snapshots; v1.3.0 persists membership in both current and snapshot-boundary state. It does not provide Byzantine tolerance, peer discovery, TLS, DoS-resistant quotas, or production distributed finality. Snapshot payloads are capped at 64 MiB and contain the complete Ledger history, so this is not yet a state-only or unbounded snapshot design.
+Raft voter membership is odd-sized (3, 5, 7, or 9) and can change through the two-entry joint-consensus transition. A shared, pre-provisioned roster may contain up to nine voter/learner endpoints; learners replicate but do not vote, and must catch up to the committed index before promotion. Every node shares the exact initial roster, cluster ID, Ledger checkpoint, and compatible chain parameters. Each member owns a database and trusts the other provisioned identities. The implementation models crash/recovery failures with non-Byzantine members. v1.2.0 compacts applied log prefixes and transfers bounded full-Ledger snapshots; v1.3.0 persists membership in both current and snapshot-boundary state. It does not provide Byzantine tolerance, peer discovery, TLS, a complete DDoS defense, or production distributed finality. v1.7 inbound token buckets bound connection/handshake attempt rates only. Snapshot payloads are capped at 64 MiB and contain the complete Ledger history, so this is not yet a state-only or unbounded snapshot design.
 
 See [`networking.md`](networking.md), [`raft.md`](raft.md), and [`raft-networking-guide.md`](raft-networking-guide.md).

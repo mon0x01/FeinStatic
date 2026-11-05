@@ -1,4 +1,4 @@
-# FeinStatic peer networking (v1.6.0)
+# FeinStatic peer networking (v1.7.0)
 
 ## Scope
 
@@ -29,7 +29,7 @@ Trust is bilateral: A must trust B for A to accept B's requests, and B must trus
 
 ## Authenticated handshake and session frames
 
-Authenticated protocol v7 uses mutual Ed25519 challenge-response with fresh nonces and chain-parameter binding. Both peers exchange ephemeral X25519 public keys, sign those keys into the handshake transcript, and derive independent directional AES-256-GCM keys with HKDF-SHA-256. Every post-handshake frame is encrypted; its session binding, type, and monotonically increasing sequence number are AEAD associated data, and its ciphertext retains an Ed25519 signature. Receivers reject invalid signatures, AEAD tags, repeated sequence numbers, gaps, and out-of-order frames.
+Authenticated protocol v8 uses mutual Ed25519 challenge-response with fresh nonces and chain-parameter binding. Both peers exchange ephemeral X25519 public keys, sign those keys into the handshake transcript, and derive independent directional AES-256-GCM keys with HKDF-SHA-256. Every post-handshake frame is encrypted; its session binding, type, and monotonically increasing sequence number are AEAD associated data, and its ciphertext retains an Ed25519 signature. Receivers reject invalid signatures, AEAD tags, repeated sequence numbers, gaps, and out-of-order frames.
 
 This is application-layer encryption, not TLS. It does not hide IP/port, packet-size, or timing metadata and has not received an independent cryptographic audit. Use controlled private networks only. Membership administration and trust-policy installation are restricted to active `operator` identities. `peer-trust-revoke` records a local revocation tombstone; `peer-trust-rotate` replaces an identity while retaining its role.
 
@@ -47,7 +47,7 @@ The legacy unauthenticated `node-listen` listener is restricted to loopback. Rem
 
 ## Protocol and bounds
 
-Wire protocol version 7 retains the bounded framing and adds Raft RPC, Raft status with membership metadata, block-proposal, and joint-consensus membership-change request/response messages. A frame includes the `FSN1` magic, wire version, message type, bounded payload length, sequence metadata, SHA-256 payload checksum, Ed25519 signature (zero only for pre-authentication handshake frames), and payload. The maximum frame payload is 16 MiB. Transaction and block serializers enforce their own smaller bounds. Network operations are time-bounded.
+Wire protocol version 8 retains the bounded framing and adds Raft RPC, Raft status with membership metadata, block-proposal, and joint-consensus membership-change request/response messages. A frame includes the `FSN1` magic, wire version, message type, bounded payload length, sequence metadata, SHA-256 payload checksum, Ed25519 signature (zero only for pre-authentication handshake frames), and payload. The maximum frame payload is 16 MiB. Transaction and block serializers enforce their own smaller bounds. Network operations are time-bounded.
 
 Raft RPCs use the same authenticated session framing. A member accepts a Raft message only when the authenticated transport peer ID equals `message.from`, `message.to` equals the local member ID, and the sender belongs to the configured voter/learner roster. Learners may send append/snapshot acknowledgements but cannot vote or campaign.
 
@@ -70,11 +70,15 @@ build/release/feinstatic raft-propose-block-auth db host port identity.key trust
 
 Only a ready Raft leader accepts a block proposal. The result reports an accepted Raft log index; it does not guarantee commitment. Query members until the commit and applied indices converge. Remember that no-op entries consume Raft indices without creating Ledger blocks.
 
-Transactions are admitted to the addressed member's local durable mempool by the existing `peer-submit-tx-auth` command. Transaction gossip is not automatic; send transactions to the current leader before requesting a block proposal.
+Transactions are admitted to the addressed member's durable mempool by `peer-submit-tx-auth`. In Raft mode, an accepted new transaction is queued for best-effort gossip to every other enabled pre-provisioned voter/learner; the sender is excluded. Receivers validate and persist the transaction in their own mempool, and duplicates count as successful delivery. Gossip does not commit a transaction or make it part of the canonical Ledger: only a leader proposal followed by Raft majority commitment and ordered application does that.
+
+The outbound dispatcher also periodically scans the durable mempool and refills bounded gossip queues. This recovers dissemination after a process restart, because outbound queues themselves are volatile. Per-peer pending gossip IDs suppress repeated queueing while a delivery is pending or already completed in that process. Queue saturation defers work to a later scan rather than making the queue unbounded.
 
 ## Runtime threading and persistence
 
-Ledger and Raft state-machine transitions, plus inbound request handling, are serialized on the main node event loop. Outbound Raft RPCs use a fixed-size shared worker pool (default four, maximum eight), not one thread per peer. Scheduling permits one in-flight request per peer, preserving that peer's FIFO order while workers serve other peers. Global and per-peer queues are bounded; stale heartbeat work may be coalesced or dropped under pressure, and failures use capped exponential retry backoff. These controls bound outbound resource use; they do not provide inbound connection concurrency or a general DoS admission-control layer.
+Ledger and Raft state-machine transitions, plus inbound request handling, remain serialized on the main node event loop. The accepted socket is checked against global and per-address token buckets before handshake parsing. The per-address bucket map is bounded by `maximum_tracked_addresses`; idle entries expire after `address_idle_expiry`. `InboundAdmissionConfig` exposes global/per-address refill rates and burst sizes, and Raft mode reads it from `RaftNetworkConfig::inbound_admission`. Defaults are deliberately generous for a busy nine-member private cluster; operators should tune them to the expected source-IP topology. This admission gate limits connection/handshake work but does not make the event loop concurrent, protect upstream bandwidth, or constitute a full DDoS defense.
+
+Outbound Raft RPCs and transaction gossip use a fixed-size shared worker pool (default four, maximum eight), not one thread per peer. Each peer has separate bounded FIFO queues for Raft and gossip, one in-flight message per peer, and reserved capacity so gossip cannot consume the configured Raft queue budget. Raft messages receive priority, but an eight-message streak limit prevents permanent gossip starvation. Retries have independent capped exponential backoff. Retryable failures are requeued at the head of the same per-peer queue while the in-flight capacity reservation is retained; permanent transaction rejection is terminal. Stale heartbeat work can be coalesced or dropped under pressure.
 
 Committed block application persists the Ledger block append, durable mempool reconciliation, and Raft `last_applied` snapshot in one SQLite transaction. In-memory state is published only after commit. On restart, the adapter verifies the persisted applied log against the recovered Ledger chain.
 
@@ -86,4 +90,4 @@ The legacy authenticated `node-listen-auth`, `peer-status-auth`, `peer-sync-auth
 
 ## Remaining work and explicit limits
 
-Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 can explicitly push a signed trust policy to one already-provisioned node at a time; it does not automatically broadcast to the cluster. It does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, rate limiting, or production finality. Protocol v7 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.
+Raft mode is a crash-fault-tolerant prototype. Voter membership can change through joint consensus, but only within a pre-provisioned endpoint roster of at most nine voters plus learners. New endpoints are not discovered. v1.5.0 trust-policy pushes remain explicit and target-by-target. v1.7.0 adds token-bucket inbound connection admission and automatic best-effort transaction gossip, but neither is an Internet-scale abuse defense or a consensus/finality mechanism. The system does not support Byzantine fault tolerance, NAT traversal, automatic peer discovery, or production finality. Protocol v8 provides application-layer frame confidentiality but is not TLS and has not received an independent cryptographic audit. Run only on loopback or a controlled private network.

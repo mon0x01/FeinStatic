@@ -1,3 +1,14 @@
+## 1.7.0
+
+- Upgrade the authenticated peer wire protocol to v8 so all peers explicitly negotiate the new networking behavior together; no SQLite schema migration is introduced.
+- Add bounded inbound token-bucket admission before handshake parsing, with global and per-address refill/burst limits, bounded tracked-address state, and idle bucket expiry.
+- Add automatic transaction gossip across the configured Raft member/learner endpoint roster. A newly admitted transaction is forwarded to other enabled peers except its source; duplicates are treated as successful delivery.
+- Rebuild transaction gossip after node restart from the durable pending mempool, so volatile outbound queues are not the only record of pending dissemination. Periodically refill bounded gossip queues from the durable mempool to handle queue backpressure.
+- Unify outbound dispatch with separate Raft and transaction-gossip queues, reserved gossip capacity, consensus-priority scheduling with bounded fairness, one in-flight message per peer, and independent retry backoff.
+- Requeue failed outbound messages at the head of their original per-peer queue while retaining in-flight capacity accounting; do not silently lose retryable failures. Permanent transaction rejections are terminal and are not retried forever.
+- Add real authenticated TCP coverage for inbound per-address rate limiting/refill and three-member transaction gossip, including offline receivers and origin restart with 130 durable pending transactions.
+- Keep the inbound event loop and Ledger/Raft state mutation single-writer and serialized. Admission control is resource bounding, not a complete Internet-facing DDoS defense.
+
 ## 1.6.1
 
 - Fixes a timing race in the four-process membership verification lab: applied-index convergence is not treated as proof that the leader has already processed the corresponding AppendResponse and advanced its replication `match_index`.

@@ -1,24 +1,44 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-# Non-destructive v1.6.1 verification patch for an existing Arch Linux FeinStatic checkout.
+# Non-destructive v1.7.0 network reliability update for an existing Arch Linux FeinStatic checkout.
 PROJECT_ROOT="${FEINSTATIC_PROJECT_ROOT:-$HOME/Desktop/CXX}"
 PROJECT="$PROJECT_ROOT/FeinStatic"
-ARCHIVE="${1:-$HOME/Downloads/FeinStatic-1.6.1-source.tar.gz}"
+ARCHIVE="${1:-$HOME/Downloads/FeinStatic-1.7.0-source.tar.gz}"
 BACKUP_PARENT="$PROJECT_ROOT/.FeinStatic-backups"
 STAMP="$(date +%Y%m%d-%H%M%S)"
-BACKUP="$BACKUP_PARENT/FeinStatic-before-1.6.1-$STAMP"
+BACKUP="$BACKUP_PARENT/FeinStatic-before-1.7.0-$STAMP"
 STAGE=""
+UPDATE_STARTED=0
+UPDATE_COMPLETE=0
 
 cleanup() {
     [[ -z "$STAGE" || ! -d "$STAGE" ]] || rm -rf -- "$STAGE"
 }
+
+on_error() {
+    local rc="${1:-1}"
+    trap - ERR
+    if [[ "$UPDATE_STARTED" == 1 && "$UPDATE_COMPLETE" != 1 && -d "$BACKUP" ]]; then
+        echo "
+Update did not complete. Restoring the complete pre-update checkout and runtime..." >&2
+        rm -rf -- "$PROJECT"
+        if ! cp -a -- "$BACKUP" "$PROJECT"; then
+            echo "CRITICAL: automatic restore failed. The untouched backup remains at: $BACKUP" >&2
+        else
+            echo "Rollback completed. Original checkout restored from: $BACKUP" >&2
+        fi
+    fi
+    echo "UPDATE FAILED (exit $rc). Backup: ${BACKUP:-not-created}" >&2
+    exit "$rc"
+}
+
 trap cleanup EXIT
-trap 'rc=$?; echo; echo "UPDATE FAILED (exit $rc). Existing checkout backup: ${BACKUP:-not-created}" >&2; exit "$rc"' ERR
-fail() { echo "ERROR: $*" >&2; exit 1; }
+trap 'on_error "$?"' ERR
+fail() { echo "ERROR: $*" >&2; on_error 1; }
 
 [[ -d "$PROJECT" && -f "$PROJECT/CMakeLists.txt" ]] || fail "Existing FeinStatic checkout not found at: $PROJECT"
-grep -q 'project(FeinStatic VERSION 1.6.0' "$PROJECT/CMakeLists.txt" || fail "This updater requires an existing FeinStatic 1.6.0 checkout."
+grep -q 'project(FeinStatic VERSION 1.6.1' "$PROJECT/CMakeLists.txt" || fail "This updater requires an existing FeinStatic 1.6.1 checkout."
 [[ -f "$ARCHIVE" ]] || fail "Source archive not found: $ARCHIVE"
 for command in pacman cmake ninja gcc g++ clang++ git tar sha256sum python3 pgrep; do
     command -v "$command" >/dev/null 2>&1 || fail "Required command is missing: $command"
@@ -32,7 +52,7 @@ ACTUAL_SHA256="$(sha256sum "$ARCHIVE" | cut -d' ' -f1)"
 if [[ -n "$EXPECTED_SHA256" ]]; then
     [[ "$ACTUAL_SHA256" == "$EXPECTED_SHA256" ]] || fail "Source archive does not match the pinned SHA-256."
 fi
-echo "Verifying v1.6.1 source archive checksum..."
+echo "Verifying v1.7.0 source archive checksum..."
 (cd "$ARCHIVE_DIR" && sha256sum -c "$(basename "$CHECKSUM_FILE")")
 if [[ -n "$EXPECTED_SHA256" ]]; then echo "Pinned SHA-256: PASS"; fi
 
@@ -131,6 +151,7 @@ fi
 mkdir -p "$BACKUP_PARENT"
 echo "Creating full pre-update backup: $BACKUP"
 cp -a -- "$PROJECT" "$BACKUP"
+UPDATE_STARTED=1
 STAGE="$(mktemp -d "$PROJECT_ROOT/.FeinStatic-stage.XXXXXX")"
 echo "Inspecting archive paths..."
 mapfile -t ARCHIVE_ENTRIES < <(tar -tzf "$ARCHIVE")
@@ -139,15 +160,15 @@ for entry in "${ARCHIVE_ENTRIES[@]}"; do
     [[ "$entry" != /* && "/$entry/" != *"/../"* && "$entry" == FeinStatic/* ]] || fail "Unsafe or unexpected archive path: $entry"
 done
 
-echo "Extracting and validating v1.6.1 source archive..."
+echo "Extracting and validating v1.7.0 source archive..."
 tar --no-same-owner -xzf "$ARCHIVE" -C "$STAGE"
 SOURCE="$STAGE/FeinStatic"
 [[ -f "$SOURCE/CMakeLists.txt" && -d "$SOURCE/src" && -d "$SOURCE/include" ]] || fail "Archive is not a valid FeinStatic source tree."
 [[ ! -e "$SOURCE/.git" && ! -e "$SOURCE/build" && ! -e "$SOURCE/runtime" ]] || fail "Archive must not contain local Git/build/runtime data."
-grep -q 'project(FeinStatic VERSION 1.6.1' "$SOURCE/CMakeLists.txt" || fail "Archive is not FeinStatic 1.6.1."
+grep -q 'project(FeinStatic VERSION 1.7.0' "$SOURCE/CMakeLists.txt" || fail "Archive is not FeinStatic 1.7.0."
 [[ -x "$SOURCE/scripts/raft-process-chaos.py" && -x "$SOURCE/scripts/raft-membership-process.py" && -x "$SOURCE/scripts/verify-all.sh" && -f "$SOURCE/tools/raft_lab_prepare.cpp" ]] || fail "Archive is missing its verification/process-lab files."
 
-printf 'Merging v1.6.1 source files (Git history and runtime data preserved)...\n'
+printf 'Merging v1.7.0 source files (Git history and runtime data preserved)...\n'
 cp -a -- "$SOURCE/." "$PROJECT/"
 echo "Removing generated build cache only; .git and runtime remain untouched..."
 rm -rf -- "$PROJECT/build"
@@ -165,7 +186,7 @@ fi
 
 cd "$PROJECT"
 echo
-echo "========== FEINSTATIC v1.6.1 FULL VERIFICATION =========="
+echo "========== FEINSTATIC v1.7.0 FULL VERIFICATION =========="
 ./scripts/verify-all.sh
 
 echo
@@ -232,9 +253,9 @@ def digest_tables(names):
 actual = digest_tables(baseline['tables'])
 connection.close()
 if actual != baseline['digest']:
-    raise SystemExit('Pre-existing SQLite table schema/data fingerprint changed during the v1.6.1 update.')
+    raise SystemExit('Pre-existing SQLite table schema/data fingerprint changed during the v1.7.0 update.')
 print(f"Verified: all {len(baseline['tables'])} pre-existing SQLite tables retain their schema and row data.")
-print("No v1.6.1 SQLite schema migration is expected.")
+print("No v1.7.0 SQLite schema migration is expected.")
 PY
     fi
 else
@@ -247,8 +268,9 @@ if [[ -n "$ENDPOINT_REGISTRY_HASH_BEFORE" ]]; then
     echo "Verified: existing peer endpoint registry remains unchanged after verification."
 fi
 
+UPDATE_COMPLETE=1
 printf '\n==============================================\n'
-printf ' FEINSTATIC 1.6.1 UPDATE COMPLETED\n'
+printf ' FEINSTATIC 1.7.0 UPDATE COMPLETED\n'
 printf '==============================================\n'
 printf 'Project: %s\n' "$PROJECT"
 printf 'Backup:  %s\n' "$BACKUP"

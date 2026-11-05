@@ -1172,7 +1172,7 @@ int raft_peer_endpoint_set_command(const std::string& database, const std::strin
 }
 
 void print_usage(const char* executable) {
-    std::cout << "FeinStatic 1.6.1 — resilient peer lifecycle and endpoint management\n\n"
+    std::cout << "FeinStatic 1.7.0 — bounded inbound admission and transaction gossip\n\n"
               << "Usage:\n"
               << "  " << executable << " demo                  Run synthetic Ledger/Match/Flow demonstrations\n"
               << "  " << executable << " init [database.db]    Create a new private ledger\n"
@@ -1198,9 +1198,9 @@ void print_usage(const char* executable) {
               << "  " << executable << " raft-peer-endpoint-set-auth db host port identity.key trust.txt expected-peer-id target-peer-id endpoint-host endpoint-port enabled|disabled\n"
               << "  " << executable << " --help                Show this help\n\n"
               << "Raft peers require the same Ledger checkpoint and cluster ID. Pre-provision voters and learners with the same member roster and mutual trust configuration; roles use the optional fourth field in members.txt.\n"
-              << "Raft is crash-fault tolerant, not Byzantine fault tolerant. Protocol v7 encrypts application frames but is not TLS.\n"
-              << "Protocol v7 retains X25519/AES-256-GCM sessions and signed, monotonic trust-policy replication.\n"
-              << "v1.6.0 persists operator-managed endpoint overrides in <database>.endpoints and uses a bounded FIFO-preserving outbound worker pool.\n"
+              << "Raft is crash-fault tolerant, not Byzantine fault tolerant. Protocol v8 encrypts application frames but is not TLS.\n"
+              << "Protocol v8 adds bounded inbound admission and automatic Raft transaction gossip to X25519/AES-256-GCM sessions.\n"
+              << "v1.7.0 uses separate bounded Raft/gossip queues, consensus-priority fair dispatch, retry requeue, and durable-mempool gossip recovery.\n"
               << "Endpoint disable pauses transport to a configured member; it does not remove the member from Raft quorum or membership.\n"
               << "Node identity vaults use PBKDF2-HMAC-SHA256 and AES-256-GCM; legacy raw 0600 identities remain readable.\n";
 }

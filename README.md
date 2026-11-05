@@ -2,13 +2,22 @@
 
 **FeinStatic** is a modular C++20 financial-infrastructure and distributed-systems prototype. It combines a private native-asset Ledger, an off-chain order-matching engine, an automated market maker, shared settlement, a Ledger/settlement bridge, authenticated peer networking, and a crash-fault Raft cluster with snapshot recovery and joint-consensus voter changes.
 
-Release: **1.6.1**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
+Release: **1.7.0**. The terminal application is line-oriented. This is educational/private test infrastructure, not production financial infrastructure or a public cryptocurrency.
 
-## Version 1.6.1 changes
+## Version 1.7.0 changes
 
-- Hardens the real-process joint-consensus lab against the asynchronous boundary between follower application and the leader processing the corresponding AppendResponse. The lab now uses the current leader at the time of the transition and retries only the explicit pre-append "new voter is not caught up" rejection while the leader receives the replication acknowledgement.
+- Adds global and per-address token-bucket admission before peer handshake parsing, with bounded address tracking and idle expiry.
+- Adds automatic transaction gossip across enabled, pre-provisioned Raft members and learners. The durable mempool is the recovery source after restart; bounded queue backpressure is handled by periodic refill.
+- Refactors outbound dispatch into separate bounded Raft and gossip queues, reserves capacity for consensus, applies an eight-message Raft priority streak to prevent permanent gossip starvation, and uses independent retry timers.
+- Fixes retry semantics: a failed retryable message is requeued at the head of its peer queue and its in-flight capacity remains reserved until delivery or terminal rejection.
+- Adds authenticated multi-process TCP tests for inbound rate limiting and transaction dissemination through origin restart with receivers offline.
+- Upgrades the authenticated peer wire protocol to v8. The SQLite schema is unchanged.
+
+## Version 1.6.1 changes (previous release)
+
+- Hardens the real-process joint-consensus lab against the asynchronous boundary between follower application and the leader processing the corresponding AppendResponse. The lab uses the current leader at transition time and retries only the explicit pre-append "new voter is not caught up" rejection while the leader receives the replication acknowledgement.
 - The retry never bypasses the Raft promotion guard: no membership command is appended until the leader's `match_index` satisfies the committed-index requirement. Other errors remain immediate failures; a bounded timeout retains logs and reports the last rejection.
-- No Raft wire-protocol, SQLite schema, persistent-state, or application behavior change. This is a verification reliability patch for the v1.6.0 implementation.
+- No Raft wire-protocol, SQLite schema, or persistent-state format change.
 
 ## Version 1.6.0 changes
 
@@ -80,7 +89,7 @@ Release: **1.6.1**. The terminal application is line-oriented. This is education
 - Adds real loopback TCP cluster tests with three independent SQLite databases and authenticated identities: election, majority block replication, Ledger convergence, bypass rejection, restart recovery, leader failure/re-election, and former-leader catch-up.
 - The suite contains **131 automated test cases** and passes GCC Debug, GCC Release, GCC ASan/UBSan, and Clang Release with `-Werror`.
 
-Scope: Raft mode is a permissioned **crash-fault-tolerant prototype**. It is not Byzantine fault tolerant. Voter changes use joint consensus within a pre-provisioned endpoint roster (at most nine total voters plus learners). v1.5.0 adds explicit signed trust-policy pushes to already-provisioned nodes. v1.6.0 adds live management of endpoints within that pre-provisioned roster, but not peer-ID discovery or roster expansion. Transaction gossip, inbound rate limiting, and production finality are not implemented. Snapshot payloads are full serialized Ledger histories with a 64 MiB cap; chunk assembly is in memory and restarts from byte zero after a receiver process restart. Authenticated protocol v7 encrypts application frames with ephemeral X25519, HKDF-SHA-256, and AES-256-GCM. This is not TLS and has not received an independent cryptographic audit. See [`docs/raft.md`](docs/raft.md) and [`docs/raft-networking-guide.md`](docs/raft-networking-guide.md).
+Scope: Raft mode is a permissioned **crash-fault-tolerant prototype**. It is not Byzantine fault tolerant. Voter changes use joint consensus within a pre-provisioned endpoint roster (at most nine total voters plus learners). v1.5.0 adds explicit signed trust-policy pushes; v1.6.0 adds live endpoint management; v1.7.0 adds bounded inbound connection admission and automatic best-effort transaction gossip with durable-mempool recovery. Peer-ID discovery and roster expansion remain unimplemented. Inbound admission uses configurable global/per-address token buckets but is not a complete Internet-facing DDoS defense. Transaction gossip is dissemination, not consensus or finality. Snapshot payloads are full serialized Ledger histories with a 64 MiB cap; chunk assembly is in memory and restarts from byte zero after a receiver process restart. Authenticated protocol v8 encrypts application frames with ephemeral X25519, HKDF-SHA-256, and AES-256-GCM. This is not TLS and has not received an independent cryptographic audit. See [`docs/raft.md`](docs/raft.md), [`docs/networking.md`](docs/networking.md), and [`docs/raft-networking-guide.md`](docs/raft-networking-guide.md).
 
 ## Version 0.9.0 changes (historical)
 
@@ -115,7 +124,7 @@ At v0.7.0, authenticated frames were signed, bound to fresh session nonces, and 
 
 Each node needs its own database, Ed25519 node identity, and allow-list entry for the other node. Generate identities with `node-keygen`, exchange only their public ID/key, then use `peer-trust-add` to create bilateral trust files. Start a listener with `node-listen-auth`; use `peer-status-auth` and `peer-sync-auth` from the other node. See [`docs/networking.md`](docs/networking.md) for the complete workflow.
 
-Authenticated protocol v7 encrypts application frames using ephemeral X25519, HKDF-SHA-256, and AES-256-GCM, while retaining Ed25519 identity/frame authentication. It is application-layer encryption, not TLS. Use controlled private networks only pending independent cryptographic review. See `docs/consensus.md` for reorganization rules and limitations.
+Authenticated protocol v8 encrypts application frames using ephemeral X25519, HKDF-SHA-256, and AES-256-GCM, while retaining Ed25519 identity/frame authentication. It is application-layer encryption, not TLS. Use controlled private networks only pending independent cryptographic review. See `docs/consensus.md` for reorganization rules and limitations.
 
 ## Version 0.6.0 changes
 
@@ -364,9 +373,9 @@ Ledger block append and the off-chain FinancialPlatform snapshot remain separate
 
 For Raft-enabled multi-node operation, provision one independent database checkpoint and Ed25519 node identity per member, exchange only public node IDs/public keys, create bilateral trust files with `peer-trust-add`, and start each member with `raft-node`. Use `raft-status-auth` to inspect status and `raft-propose-block-auth` to request a leader proposal. The complete three-node procedure is in [`docs/raft-networking-guide.md`](docs/raft-networking-guide.md). Legacy non-Raft authenticated peer commands remain available as described in [`docs/networking.md`](docs/networking.md).
 
-The older `node-listen`, `peer-status`, `peer-sync`, `peer-submit-tx`, and `peer-relay-tip` commands remain available for local loopback development only. The unauthenticated listener refuses non-loopback binds. Authenticated protocol v7 encrypts application frames using ephemeral X25519, HKDF-SHA-256, and AES-256-GCM while retaining Ed25519 authentication and replay protection. This is application-layer encryption, not TLS; transport metadata remains visible and the protocol has not received an external cryptographic audit. Use controlled private networks only.
+The older `node-listen`, `peer-status`, `peer-sync`, `peer-submit-tx`, and `peer-relay-tip` commands remain available for local loopback development only. The unauthenticated listener refuses non-loopback binds. Authenticated protocol v8 encrypts application frames using ephemeral X25519, HKDF-SHA-256, and AES-256-GCM while retaining Ed25519 authentication and replay protection. This is application-layer encryption, not TLS; transport metadata remains visible and the protocol has not received an external cryptographic audit. Use controlled private networks only.
 
-Each cluster member must use its own database, and only one writable process may open that database at a time. Ledger and Raft state-machine transitions are serialized on the server event loop; bounded per-peer workers dispatch outbound Raft RPCs. Pending transactions remain local to the addressed member until proposed by the leader; automatic transaction gossip and peer discovery are not implemented. The Raft cluster supports joint-consensus voter changes only within its pre-provisioned endpoint/trust roster; it remains crash-fault-only, not Byzantine consensus or production finality.
+Each cluster member must use its own database, and only one writable process may open that database at a time. Ledger and Raft state-machine transitions are serialized on the server event loop; bounded per-peer workers dispatch Raft RPCs and best-effort transaction gossip. Accepted transactions are disseminated to enabled pre-provisioned members, and pending durable mempool entries are re-queued after restart. Gossip is not consensus; the leader must still propose a block and Raft must commit it. Peer discovery remains manual. The Raft cluster supports joint-consensus voter changes only within its pre-provisioned endpoint/trust roster; it remains crash-fault-only, not Byzantine consensus or production finality.
 
 ## Benchmark
 
@@ -385,7 +394,7 @@ This synthetic benchmark measures one process and an in-memory Match order book.
 - SQLite WAL and synchronous FULL are enabled; schema and application state are validated on open. SHA-256 snapshot checksums are corruption checks, not authentication. This is not a formal crash-consistency proof or an independent security audit.
 - The financial platform serializes a full state snapshot on each mutation; this favors atomicity and a simple local MVP over large-scale write throughput. A journal/event-sourcing or normalized-table design would be a future scaling step.
 - The Bridge is native-FST-only and uses one local vault wallet. It supports one pending withdrawal at a time, requires the vault to cover all customer FST liabilities plus pending signed payouts/network fees, and does not provide cancellation of a signed pending transaction.
-- The legacy non-Raft synchronization service still uses deterministic local fork choice; Raft-enabled members use the integrated authenticated RPC/majority-commit path. Raft voter changes use joint consensus within a pre-provisioned non-Byzantine crash-fault-only roster. Authenticated peer application frames are encrypted under protocol v7; this is not TLS and has not received independent cryptographic review. There is no production financial finality, production custody, external auditor, payment rail, real USD, or real customer funds.
+- The legacy non-Raft synchronization service still uses deterministic local fork choice; Raft-enabled members use the integrated authenticated RPC/majority-commit path. Raft voter changes use joint consensus within a pre-provisioned non-Byzantine crash-fault-only roster. Authenticated peer application frames are encrypted under protocol v8; this is not TLS and has not received independent cryptographic review. There is no production financial finality, production custody, external auditor, payment rail, real USD, or real customer funds.
 - The UI is line-oriented; no FTXUI full-screen interface, public network API, or broker connection is supported.
 
 ## Documentation

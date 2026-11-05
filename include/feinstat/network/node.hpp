@@ -16,7 +16,7 @@
 
 namespace feinstat::network {
 
-inline constexpr std::uint32_t kProtocolVersion = 7;
+inline constexpr std::uint32_t kProtocolVersion = 8;
 inline constexpr std::size_t kMaximumFrameBytes = 16U * 1024U * 1024U;
 inline constexpr std::uint32_t kMaximumBlocksPerBatch = 32;
 
@@ -83,6 +83,18 @@ struct RaftPeerEndpointUpdateResult {
     bool enabled{true};
 };
 
+// Token-bucket admission policy applied before the peer handshake is parsed.
+// The defaults tolerate a busy nine-member local cluster; operators can lower
+// them for internet-facing deployments.
+struct InboundAdmissionConfig {
+    double global_refill_per_second{2048.0};
+    std::size_t global_burst{8192};
+    double per_address_refill_per_second{512.0};
+    std::size_t per_address_burst{2048};
+    std::size_t maximum_tracked_addresses{4096};
+    std::chrono::seconds address_idle_expiry{300};
+};
+
 struct RaftNetworkConfig {
     std::string database_path;
     consensus::RaftConfig consensus;
@@ -94,6 +106,10 @@ struct RaftNetworkConfig {
     std::string endpoint_registry_path;
     std::size_t outbound_worker_count{4};
     std::size_t maximum_queued_messages_per_peer{128};
+    // Best-effort transaction gossip is bounded separately so it cannot consume
+    // the capacity reserved for Raft control traffic.
+    std::size_t maximum_queued_gossip_messages_per_peer{64};
+    InboundAdmissionConfig inbound_admission{};
 };
 
 struct RaftPeerStatus {
@@ -179,6 +195,11 @@ public:
         const std::string& host, std::uint16_t port, bool enabled = true) const;
     void send_raft_message(const PeerChainParameters& parameters,
                            const consensus::RaftMessage& message) const;
+    // Internal-style transport entry point used by the bounded peer dispatcher.
+    // A duplicate is a successful gossip delivery; invalid transactions are not.
+    [[nodiscard]] bool send_gossip_transaction(const PeerChainParameters& parameters,
+                                               const ledger::Transaction& transaction,
+                                               std::string* error = nullptr) const;
 
 private:
     std::string host_;
@@ -197,12 +218,14 @@ public:
     NodeServer(ledger::Ledger& ledger,
                const std::string& bind_address,
                std::uint16_t port,
-               std::chrono::milliseconds timeout = std::chrono::seconds(5));
+               std::chrono::milliseconds timeout = std::chrono::seconds(5),
+               InboundAdmissionConfig admission = {});
     NodeServer(ledger::Ledger& ledger,
                const std::string& bind_address,
                std::uint16_t port,
                PeerAuthConfig authentication,
-               std::chrono::milliseconds timeout = std::chrono::seconds(5));
+               std::chrono::milliseconds timeout = std::chrono::seconds(5),
+               InboundAdmissionConfig admission = {});
     NodeServer(ledger::Ledger& ledger,
                const std::string& bind_address,
                std::uint16_t port,

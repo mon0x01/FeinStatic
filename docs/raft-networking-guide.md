@@ -1,4 +1,4 @@
-# Three-node Raft loopback lab (v1.6.0)
+# Three-node Raft loopback lab (v1.7.0)
 
 This procedure demonstrates the actual Raft-over-authenticated-TCP runtime on one machine. It is a development lab, not a public-network deployment guide.
 
@@ -106,7 +106,7 @@ Status reports role, leader, term, commit index, applied index, log index, Ledge
 
 ## 7. Submit and replicate a block
 
-To include a signed transaction, submit it to the current leader's local mempool first. The operator database must contain the same sender wallet and unlock passphrase:
+To include a signed transaction, submit it to any enabled Raft member's local mempool. v1.7.0 gossips the accepted transaction to the other enabled pre-provisioned members. The operator database must contain the same sender wallet and unlock passphrase:
 
 ```bash
 build/release/feinstatic peer-submit-tx-auth runtime/raft-operator.db 127.0.0.1 7431 \
@@ -123,7 +123,7 @@ build/release/feinstatic raft-propose-block-auth runtime/raft-operator.db 127.0.
 
 The returned index is the Raft log index. It may be ahead of the Ledger height because internal no-op entries also occupy log indices. An accepted proposal is not yet committed. Query all members and check that `commit_index` and `last_applied` reach the proposal index and that the Ledger height/tip converge.
 
-Transactions are admitted to the addressed node's mempool; there is no automatic transaction gossip fan-out in this release. Direct block import and legacy chain synchronization are rejected in Raft mode, preventing those paths from bypassing consensus.
+Transactions are admitted to the addressed node's durable mempool and gossiped best-effort to enabled pre-provisioned members. Gossip is not consensus or finality; block inclusion still requires leader proposal and majority commitment. Direct block import and legacy chain synchronization are rejected in Raft mode, preventing those paths from bypassing consensus.
 
 ## Operating constraints
 
@@ -131,8 +131,8 @@ Transactions are admitted to the addressed node's mempool; there is no automatic
 - Crash-fault model only; no Byzantine fault tolerance.
 - Every member needs its own database and must start from the exact same checkpoint.
 - Do not run multiple writers against one database.
-- Authenticated protocol v7 encrypts application frames with ephemeral X25519, HKDF-SHA-256, and AES-256-GCM while retaining Ed25519 signatures and replay checks. This is not TLS; metadata remains visible and the channel has not received an independent cryptographic audit. Use loopback/controlled private networks only.
-- Snapshot catch-up is supported from v1.2.0 (full Ledger payload, 64 MiB cap); v1.3.0 adds pre-promotion learner catch-up. Peer discovery, automatic trust distribution, rate limiting, and production finality are not provided.
+- Authenticated protocol v8 encrypts application frames with ephemeral X25519, HKDF-SHA-256, and AES-256-GCM while retaining Ed25519 signatures and replay checks. This is not TLS; metadata remains visible and the channel has not received an independent cryptographic audit. Use loopback/controlled private networks only.
+- Snapshot catch-up is supported from v1.2.0 (full Ledger payload, 64 MiB cap); v1.3.0 adds pre-promotion learner catch-up. v1.7 adds inbound token-bucket connection admission and best-effort transaction gossip. Peer discovery, automatic trust distribution, complete DDoS protection, and production finality are not provided.
 
 
 ## Joint-consensus voter replacement (v1.3.0)

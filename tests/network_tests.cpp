@@ -205,6 +205,25 @@ public:
         return peer.raft_status(*monitor_ledger_);
     }
 
+    PeerStatus peer_status(std::size_t index) const {
+        network::PeerAuthConfig authentication;
+        authentication.identity = observer_identity_;
+        authentication.trusted_peers = observer_trust_;
+        authentication.expected_peer_id = identities_[index]->peer_id();
+        PeerClient peer("127.0.0.1", ports_[index], std::move(authentication));
+        return peer.status(*monitor_ledger_);
+    }
+
+    bool submit_transaction(std::size_t index, const Ledger& source,
+                            const Transaction& transaction, std::string* error = nullptr) const {
+        network::PeerAuthConfig authentication;
+        authentication.identity = observer_identity_;
+        authentication.trusted_peers = observer_trust_;
+        authentication.expected_peer_id = identities_[index]->peer_id();
+        PeerClient peer("127.0.0.1", ports_[index], std::move(authentication));
+        return peer.submit_transaction(source, transaction, error);
+    }
+
     RaftPeerHealthReport peer_health(std::size_t index) const {
         network::PeerAuthConfig authentication;
         authentication.identity = admin_identity_;
@@ -1537,4 +1556,155 @@ FS_TEST(peer_trust_roles_revocation_rotation_and_legacy_rows) {
     FS_REQUIRE(!legacy.is_operator(peer.peer_id()));
     remove_network_db(path);
     remove_network_db(legacy_path);
+}
+
+
+FS_TEST(network_inbound_token_bucket_limits_per_address_and_recovers_after_refill) {
+    Pair pair;
+    InboundAdmissionConfig admission;
+    admission.global_burst = 16;
+    admission.global_refill_per_second = 16.0;
+    admission.per_address_burst = 1;
+    admission.per_address_refill_per_second = 4.0;
+    admission.maximum_tracked_addresses = 16;
+    admission.address_idle_expiry = std::chrono::seconds(5);
+
+    NodeServer server(pair.target, "127.0.0.1", 0, std::chrono::milliseconds(250), admission);
+    std::thread worker([&] { server.run(); });
+    try {
+        PeerClient peer("127.0.0.1", server.port(), std::chrono::milliseconds(500));
+        FS_REQUIRE(peer.status(pair.source).height == 0);
+        bool rate_limited = false;
+        try {
+            (void)peer.status(pair.source);
+        } catch (const std::exception&) {
+            rate_limited = true;
+        }
+        FS_REQUIRE(rate_limited);
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+        FS_REQUIRE(peer.status(pair.source).height == 0);
+    } catch (...) {
+        server.stop();
+        worker.join();
+        throw;
+    }
+    server.stop();
+    worker.join();
+    FS_REQUIRE(pair.target.chain().height() == 0);
+}
+
+FS_TEST(raft_transaction_gossip_retries_after_destination_reconnects_without_origin_restart) {
+    const Wallet miner = Wallet::generate();
+    const Wallet recipient = Wallet::generate();
+    RunningRaftCluster cluster(miner.address());
+
+    const auto source_path = network_test_db("gossip-retry-source");
+    auto source = Ledger::initialize(source_path,
+        {{miner.address(), 100 * kAtomsPerCoin}}, 0, kAtomsPerCoin);
+    source.register_wallet(miner, "gossip-retry-source-miner-secret");
+    const auto transaction = source.create_transfer(miner, recipient.address(), 7, 0);
+    std::string source_error;
+    FS_REQUIRE(source.submit(transaction, &source_error));
+
+    // A destination outage must leave the message queued on the origin. The
+    // periodic mempool scan must not mistake an in-flight failed message for
+    // completed delivery, and recovery must not require restarting the origin.
+    cluster.stop(1);
+    std::string submit_error;
+    FS_REQUIRE(cluster.submit_transaction(0, source, transaction, &submit_error));
+    FS_REQUIRE(cluster.peer_status(0).pending_transactions == 1);
+
+    const auto retry_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    bool retry_retained = false;
+    while (std::chrono::steady_clock::now() < retry_deadline) {
+        try {
+            const auto report = cluster.peer_health(0);
+            const auto peer = std::find_if(report.peers.begin(), report.peers.end(),
+                [&](const RaftPeerHealth& value) { return value.peer_id == cluster.member_id(1); });
+            if (peer != report.peers.end() && peer->failures > 0 && peer->queued_messages > 0) {
+                retry_retained = true;
+                break;
+            }
+        } catch (const std::exception&) {
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    FS_REQUIRE(retry_retained);
+
+    cluster.restart(1);
+    const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(12);
+    bool delivered = false;
+    while (std::chrono::steady_clock::now() < delivery_deadline) {
+        try {
+            if (cluster.peer_status(1).pending_transactions == 1) {
+                delivered = true;
+                break;
+            }
+        } catch (const std::exception&) {
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    FS_REQUIRE(delivered);
+    FS_REQUIRE(cluster.peer_status(2).pending_transactions == 1);
+    FS_REQUIRE(cluster.peer_status(0).pending_transactions == 1);
+    remove_network_db(source_path);
+}
+
+FS_TEST(raft_transaction_gossip_reaches_members_and_recovers_from_origin_restart) {
+    const Wallet miner = Wallet::generate();
+    const Wallet recipient = Wallet::generate();
+    RunningRaftCluster cluster(miner.address());
+
+    const auto source_path = network_test_db("gossip-source");
+    auto source = Ledger::initialize(source_path,
+        {{miner.address(), 100 * kAtomsPerCoin}}, 0, kAtomsPerCoin);
+    source.register_wallet(miner, "gossip-source-miner-secret");
+    constexpr std::size_t transaction_count = 130;
+    std::vector<Transaction> transactions;
+    transactions.reserve(transaction_count);
+    for (std::size_t index = 0; index < transaction_count; ++index) {
+        auto transaction = source.create_transfer(miner, recipient.address(), 1, 0);
+        std::string source_error;
+        FS_REQUIRE(source.submit(transaction, &source_error));
+        transactions.push_back(std::move(transaction));
+    }
+
+    // Keep both destination processes offline. The origin accepts more than
+    // one per-peer gossip queue can hold; excess work must be deferred to the
+    // bounded mempool pump rather than discarded or allocated without limit.
+    cluster.stop(1);
+    cluster.stop(2);
+    for (const auto& transaction : transactions) {
+        std::string submit_error;
+        FS_REQUIRE(cluster.submit_transaction(0, source, transaction, &submit_error));
+    }
+    FS_REQUIRE(cluster.peer_status(0).pending_transactions == transaction_count);
+
+    // Restarting the origin destroys its old in-memory dispatch queue. Startup
+    // gossip must reconstruct the work from the durable mempool and stream it
+    // through the bounded queues as delivery frees capacity.
+    cluster.restart(0);
+    cluster.restart(1);
+    cluster.restart(2);
+
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(25);
+    bool converged = false;
+    while (std::chrono::steady_clock::now() < deadline) {
+        try {
+            const bool all_have_transactions =
+                cluster.peer_status(0).pending_transactions == transaction_count &&
+                cluster.peer_status(1).pending_transactions == transaction_count &&
+                cluster.peer_status(2).pending_transactions == transaction_count;
+            if (all_have_transactions) {
+                converged = true;
+                break;
+            }
+        } catch (const std::exception&) {
+            // Nodes may be rejoining and completing their first handshake.
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    FS_REQUIRE(converged);
+
+    remove_network_db(source_path);
 }

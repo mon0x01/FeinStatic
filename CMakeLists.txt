@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(FeinStatic VERSION 1.6.1 LANGUAGES CXX)
+project(FeinStatic VERSION 1.7.0 LANGUAGES CXX)
 
 option(FEINSTATIC_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 option(FEINSTATIC_BUILD_TESTS "Build the test suite" ON)

@@ -19,6 +19,7 @@
 #include <functional>
 #include <iostream>
 #include <cstdio>
+#include <cmath>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -37,7 +38,7 @@ using boost::asio::ip::tcp;
 using ErrorCode = boost::system::error_code;
 
 constexpr std::array<Byte, 4> kMagic{'F', 'S', 'N', '1'};
-constexpr std::uint16_t kWireVersion = 7;
+constexpr std::uint16_t kWireVersion = 8;
 constexpr std::size_t kHeaderBytes = 116;
 constexpr std::size_t kMaximumBlockBytes = 4U * 1024U * 1024U;
 constexpr std::size_t kMaximumErrorBytes = 4096;
@@ -75,6 +76,8 @@ constexpr MessageType kError = 255;
 
 constexpr std::size_t kMaximumRaftOutboundMessages = 1024;
 constexpr std::size_t kMaximumRaftOutboundBytes = 64U * 1024U * 1024U;
+constexpr std::size_t kMaximumGossipOutboundMessages = 512;
+constexpr std::size_t kMaximumGossipOutboundBytes = 32U * 1024U * 1024U;
 constexpr std::array<Byte, 8> kEndpointRegistryMagic{'F', 'S', 'P', 'E', 'N', 'D', '1', '\n'};
 
 bool valid_endpoint_host(const std::string& host) {
@@ -863,6 +866,7 @@ struct RaftServerContext {
     const std::set<std::string>* members{nullptr};
     std::string local_peer_id;
     std::function<void(std::vector<consensus::RaftMessage>)> enqueue;
+    std::function<void(const ledger::Transaction&, const std::string&)> enqueue_transaction;
     std::function<TrustPolicyApplyResult(const std::string&, const Bytes&)> apply_trust_policy;
     std::function<RaftPeerHealthReport()> peer_health;
     std::function<RaftPeerEndpointUpdateResult(const std::string&, const std::string&, std::uint16_t, bool)> update_endpoint;
@@ -922,6 +926,9 @@ void serve_connection(tcp::socket& socket, ledger::Ledger& ledger,
             const auto transaction = ledger::Transaction::deserialize(encoded);
             std::string error;
             const bool accepted = ledger.submit(transaction, &error);
+            if (accepted && raft_context != nullptr && raft_context->enqueue_transaction) {
+                raft_context->enqueue_transaction(transaction, client.peer_id);
+            }
             ByteWriter response;
             response.u8(accepted ? 1 : 0);
             response.string(accepted ? std::string{} : error.substr(0, kMaximumErrorBytes));
@@ -1653,10 +1660,57 @@ void PeerClient::send_raft_message(
     require_empty(ByteReader(response.payload), "Raft RPC acknowledgement must be empty");
 }
 
+bool PeerClient::send_gossip_transaction(const PeerChainParameters& parameters,
+                                         const ledger::Transaction& transaction,
+                                         std::string* error) const {
+    if (!identity_) throw std::logic_error("transaction gossip requires an authenticated peer client");
+    ClientConnection connection(host_, port_, parameters, timeout_, &auth_config_);
+    ByteWriter request;
+    request.blob(transaction.serialize());
+    const Frame response = connection.request(kSubmitTransaction, request.data());
+    expect_type(response, kSubmitTransactionResult);
+    ByteReader reader(response.payload);
+    const Byte accepted = reader.u8();
+    if (accepted > 1) throw std::runtime_error("peer returned an invalid transaction acceptance flag");
+    const std::string message = reader.string(kMaximumErrorBytes);
+    require_empty(reader, "trailing bytes in transaction gossip result");
+    if (accepted == 1) {
+        if (error != nullptr) error->clear();
+        return true;
+    }
+    // A duplicate is proof that the peer already has the transaction. It is
+    // therefore a successful delivery, not a reason to retry forever.
+    if (message.find("duplicate") != std::string::npos ||
+        message.find("replayed") != std::string::npos) {
+        if (error != nullptr) error->clear();
+        return true;
+    }
+    if (error != nullptr) *error = message;
+    return false;
+}
+
 struct NodeServer::Impl {
-    struct OutboundRaftMessage {
-        consensus::RaftMessage message;
+    struct OutboundMessage {
+        enum class Kind : std::uint8_t { Raft, Transaction };
+        Kind kind{Kind::Raft};
+        consensus::RaftMessage raft_message;
+        Bytes transaction_payload;
+        std::string transaction_id;
         std::size_t encoded_size{0};
+    };
+
+    struct PeerQueues {
+        std::deque<OutboundMessage> raft;
+        std::deque<OutboundMessage> gossip;
+        // Consensus traffic is preferred, but a sustained heartbeat/RPC stream
+        // must not starve best-effort transaction dissemination forever.
+        std::size_t consecutive_raft_dispatches{0};
+    };
+
+    struct InboundTokenBucket {
+        double tokens{0.0};
+        std::chrono::steady_clock::time_point updated{};
+        std::chrono::steady_clock::time_point last_seen{};
     };
 
     struct PeerCounters {
@@ -1665,24 +1719,31 @@ struct NodeServer::Impl {
         std::uint64_t failures{0};
         std::uint64_t dropped{0};
         std::uint32_t consecutive_failures{0};
+        std::uint32_t raft_consecutive_failures{0};
+        std::uint32_t gossip_consecutive_failures{0};
         std::uint64_t last_success_unix_ms{0};
         std::uint64_t last_failure_unix_ms{0};
         std::chrono::steady_clock::time_point retry_after{};
+        std::chrono::steady_clock::time_point gossip_retry_after{};
         std::string last_error;
     };
 
     struct DispatchWork {
         std::string peer_id;
         RaftPeerEndpoint endpoint;
-        OutboundRaftMessage item;
+        OutboundMessage item;
     };
 
     Impl(ledger::Ledger& ledger_ref, const std::string& address, std::uint16_t requested_port,
          std::chrono::milliseconds requested_timeout, std::optional<PeerAuthConfig> auth = std::nullopt,
-         std::optional<RaftNetworkConfig> raft = std::nullopt)
+         std::optional<RaftNetworkConfig> raft = std::nullopt,
+         InboundAdmissionConfig admission = {})
         : ledger(ledger_ref), timeout(requested_timeout), authentication(std::move(auth)),
-          raft_configuration(std::move(raft)), io(), acceptor(io) {
+          raft_configuration(std::move(raft)), inbound_admission(std::move(admission)),
+          global_inbound_tokens(static_cast<double>(inbound_admission.global_burst)),
+          io(), acceptor(io) {
         if (timeout <= std::chrono::milliseconds::zero()) throw std::invalid_argument("server timeout must be positive");
+        validate_inbound_admission_config(inbound_admission);
         const auto bind_address = boost::asio::ip::make_address(address);
         if (!authentication.has_value() && !bind_address.is_loopback()) {
             throw std::invalid_argument("unauthenticated peer listener is restricted to loopback; configure node identity and trust store for remote access");
@@ -1696,6 +1757,9 @@ struct NodeServer::Impl {
         bound_port = acceptor.local_endpoint().port();
 
         if (raft_configuration.has_value()) {
+            inbound_admission = raft_configuration->inbound_admission;
+            validate_inbound_admission_config(inbound_admission);
+            global_inbound_tokens = static_cast<double>(inbound_admission.global_burst);
             if (!authentication.has_value() || !authentication->identity) {
                 throw std::invalid_argument("Raft network mode requires an authenticated node identity");
             }
@@ -1714,6 +1778,11 @@ struct NodeServer::Impl {
             if (raft_configuration->maximum_queued_messages_per_peer == 0 ||
                 raft_configuration->maximum_queued_messages_per_peer > kMaximumRaftOutboundMessages) {
                 throw std::invalid_argument("Raft per-peer queue limit must be between one and 1024 messages");
+            }
+            if (raft_configuration->maximum_queued_gossip_messages_per_peer == 0 ||
+                raft_configuration->maximum_queued_gossip_messages_per_peer >
+                    raft_configuration->maximum_queued_messages_per_peer) {
+                throw std::invalid_argument("per-peer transaction gossip queue limit must be positive and no larger than the total peer queue limit");
             }
             local_peer_id = authentication->identity->peer_id();
             if (raft_configuration->consensus.node_id != local_peer_id) {
@@ -1772,6 +1841,7 @@ struct NodeServer::Impl {
                 (void)peer_endpoint;
                 peer_counters.try_emplace(peer_id);
                 outbound_queues.try_emplace(peer_id);
+                pending_gossip_ids.try_emplace(peer_id);
             }
             chain_parameters = peer_chain_parameters(ledger);
             raft_adapter = std::make_unique<consensus::RaftLedgerAdapter>(
@@ -1780,6 +1850,87 @@ struct NodeServer::Impl {
     }
 
     ~Impl() { stop_dispatcher(); }
+
+    static void validate_inbound_admission_config(const InboundAdmissionConfig& config) {
+        if (!std::isfinite(config.global_refill_per_second) || config.global_refill_per_second <= 0.0 ||
+            !std::isfinite(config.per_address_refill_per_second) || config.per_address_refill_per_second <= 0.0 ||
+            config.global_burst == 0 || config.per_address_burst == 0 ||
+            config.maximum_tracked_addresses == 0 ||
+            config.address_idle_expiry <= std::chrono::seconds::zero()) {
+            throw std::invalid_argument("inbound admission limits must be finite and strictly positive");
+        }
+    }
+
+    bool admit_connection(const tcp::socket& socket) {
+        ErrorCode endpoint_error;
+        const auto remote = socket.remote_endpoint(endpoint_error);
+        if (endpoint_error) return false;
+        const std::string address = remote.address().to_string();
+        const auto now = std::chrono::steady_clock::now();
+        std::lock_guard lock(admission_mutex);
+
+        const double elapsed_global = std::chrono::duration<double>(now - global_inbound_updated).count();
+        global_inbound_tokens = std::min(static_cast<double>(inbound_admission.global_burst),
+            global_inbound_tokens + elapsed_global * inbound_admission.global_refill_per_second);
+        global_inbound_updated = now;
+
+        auto bucket = inbound_address_buckets.find(address);
+        if (bucket == inbound_address_buckets.end()) {
+            if (inbound_address_buckets.size() >= inbound_admission.maximum_tracked_addresses) {
+                for (auto it = inbound_address_buckets.begin(); it != inbound_address_buckets.end();) {
+                    if (now - it->second.last_seen >= inbound_admission.address_idle_expiry) {
+                        it = inbound_address_buckets.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
+                if (inbound_address_buckets.size() >= inbound_admission.maximum_tracked_addresses) return false;
+            }
+            InboundTokenBucket fresh;
+            fresh.tokens = static_cast<double>(inbound_admission.per_address_burst);
+            fresh.updated = now;
+            fresh.last_seen = now;
+            bucket = inbound_address_buckets.emplace(address, fresh).first;
+        }
+
+        const double elapsed_address = std::chrono::duration<double>(now - bucket->second.updated).count();
+        bucket->second.tokens = std::min(static_cast<double>(inbound_admission.per_address_burst),
+            bucket->second.tokens + elapsed_address * inbound_admission.per_address_refill_per_second);
+        bucket->second.updated = now;
+
+        if (global_inbound_tokens < 1.0 || bucket->second.tokens < 1.0) return false;
+        global_inbound_tokens -= 1.0;
+        bucket->second.tokens -= 1.0;
+        bucket->second.last_seen = now;
+        return true;
+    }
+
+    std::size_t queued_for_peer(const PeerQueues& queue) const noexcept {
+        return queue.raft.size() + queue.gossip.size();
+    }
+
+    void drop_gossip_front(const std::string& peer_id, PeerQueues& queue) {
+        if (queue.gossip.empty()) return;
+        auto& item = queue.gossip.front();
+        outbound_bytes -= item.encoded_size;
+        outbound_gossip_bytes -= item.encoded_size;
+        --outbound_count;
+        --outbound_gossip_count;
+        pending_gossip_ids[peer_id].erase(item.transaction_id);
+        queue.gossip.pop_front();
+        ++outbound_dropped;
+        ++peer_counters[peer_id].dropped;
+    }
+
+    bool discard_any_gossip() {
+        for (auto& [peer_id, queue] : outbound_queues) {
+            if (!queue.gossip.empty()) {
+                drop_gossip_front(peer_id, queue);
+                return true;
+            }
+        }
+        return false;
+    }
 
     void enqueue_raft_messages(const std::vector<consensus::RaftMessage>& messages) {
         if (!raft_configuration.has_value()) return;
@@ -1799,43 +1950,142 @@ struct NodeServer::Impl {
             }
             const std::size_t encoded_size = message.serialize().size();
             auto& queue = outbound_queues[message.to];
-            const auto discard_one_heartbeat = [&]() -> bool {
-                const auto heartbeat = std::find_if(queue.begin(), queue.end(), [](const OutboundRaftMessage& queued) {
-                    return queued.message.type == consensus::RaftMessageType::AppendEntries && queued.message.entries.empty();
+            const auto total_peer_items = [&] {
+                return queued_for_peer(queue) + (in_flight_peers.contains(message.to) ? 1U : 0U);
+            };
+            const auto discard_heartbeat = [&]() -> bool {
+                const auto heartbeat = std::find_if(queue.raft.begin(), queue.raft.end(), [](const OutboundMessage& queued) {
+                    return queued.raft_message.type == consensus::RaftMessageType::AppendEntries &&
+                           queued.raft_message.entries.empty();
                 });
-                if (heartbeat == queue.end()) return false;
+                if (heartbeat == queue.raft.end()) return false;
                 outbound_bytes -= heartbeat->encoded_size;
                 --outbound_count;
-                queue.erase(heartbeat);
+                queue.raft.erase(heartbeat);
                 ++outbound_dropped;
                 ++counters.dropped;
                 return true;
             };
-            const bool per_peer_full = queue.size() >= raft_configuration->maximum_queued_messages_per_peer;
-            const bool globally_full = outbound_count >= kMaximumRaftOutboundMessages ||
-                outbound_bytes > kMaximumRaftOutboundBytes ||
-                encoded_size > kMaximumRaftOutboundBytes - outbound_bytes;
-            if (per_peer_full || globally_full) {
-                const bool is_heartbeat = message.type == consensus::RaftMessageType::AppendEntries && message.entries.empty();
-                if (is_heartbeat || !discard_one_heartbeat()) {
-                    ++outbound_dropped;
-                    ++counters.dropped;
-                    continue;
-                }
-                if (outbound_count >= kMaximumRaftOutboundMessages ||
-                    outbound_bytes > kMaximumRaftOutboundBytes ||
-                    encoded_size > kMaximumRaftOutboundBytes - outbound_bytes ||
-                    queue.size() >= raft_configuration->maximum_queued_messages_per_peer) {
-                    ++outbound_dropped;
-                    ++counters.dropped;
-                    continue;
-                }
+
+            bool capacity_available = total_peer_items() < raft_configuration->maximum_queued_messages_per_peer &&
+                outbound_count < kMaximumRaftOutboundMessages &&
+                outbound_bytes <= kMaximumRaftOutboundBytes &&
+                encoded_size <= kMaximumRaftOutboundBytes - outbound_bytes;
+            // Best-effort gossip is evicted before consensus messages. The
+            // independent gossip ceilings normally leave this capacity unused.
+            while (!capacity_available && discard_any_gossip()) {
+                capacity_available = total_peer_items() < raft_configuration->maximum_queued_messages_per_peer &&
+                    outbound_count < kMaximumRaftOutboundMessages &&
+                    outbound_bytes <= kMaximumRaftOutboundBytes &&
+                    encoded_size <= kMaximumRaftOutboundBytes - outbound_bytes;
             }
-            queue.push_back(OutboundRaftMessage{message, encoded_size});
+            if (!capacity_available) {
+                const bool incoming_heartbeat = message.type == consensus::RaftMessageType::AppendEntries &&
+                                                message.entries.empty();
+                if (incoming_heartbeat || !discard_heartbeat()) {
+                    ++outbound_dropped;
+                    ++counters.dropped;
+                    continue;
+                }
+                capacity_available = total_peer_items() < raft_configuration->maximum_queued_messages_per_peer &&
+                    outbound_count < kMaximumRaftOutboundMessages &&
+                    outbound_bytes <= kMaximumRaftOutboundBytes &&
+                    encoded_size <= kMaximumRaftOutboundBytes - outbound_bytes;
+            }
+            if (!capacity_available) {
+                ++outbound_dropped;
+                ++counters.dropped;
+                continue;
+            }
+            OutboundMessage item;
+            item.kind = OutboundMessage::Kind::Raft;
+            item.raft_message = message;
+            item.encoded_size = encoded_size;
+            queue.raft.push_back(std::move(item));
             ++outbound_count;
             outbound_bytes += encoded_size;
         }
         outbound_condition.notify_all();
+    }
+
+    void enqueue_transaction(const ledger::Transaction& transaction, const std::string& exclude_peer = {}) {
+        const std::vector<ledger::Transaction> single{transaction};
+        enqueue_transactions(single, exclude_peer);
+    }
+
+    void enqueue_transactions(const std::vector<ledger::Transaction>& transactions,
+                              const std::string& exclude_peer = {}) {
+        if (!raft_configuration.has_value() || transactions.empty()) return;
+        std::vector<std::pair<std::string, Bytes>> encoded_transactions;
+        encoded_transactions.reserve(transactions.size());
+        for (const auto& transaction : transactions) {
+            Bytes payload = transaction.serialize();
+            if (payload.empty() || payload.size() > 1U * 1024U * 1024U) continue;
+            const Hash transaction_hash = transaction.id();
+            encoded_transactions.emplace_back(crypto::hex(transaction_hash.data(), transaction_hash.size()),
+                                               std::move(payload));
+        }
+        if (encoded_transactions.empty()) return;
+
+        std::lock_guard queue_lock(outbound_mutex);
+        std::lock_guard endpoint_lock(endpoint_mutex);
+        for (const auto& [peer_id, endpoint] : raft_endpoints) {
+            if (peer_id == exclude_peer || !endpoint.enabled) continue;
+            auto& queue = outbound_queues[peer_id];
+            auto& pending = pending_gossip_ids[peer_id];
+            auto& delivered = delivered_gossip_ids[peer_id];
+            for (const auto& [transaction_id, payload] : encoded_transactions) {
+                if (pending.contains(transaction_id) || delivered.contains(transaction_id)) continue;
+                const std::size_t peer_total = queued_for_peer(queue) +
+                    (in_flight_peers.contains(peer_id) ? 1U : 0U);
+                const bool capacity_available = pending.size() < raft_configuration->maximum_queued_gossip_messages_per_peer &&
+                    peer_total < raft_configuration->maximum_queued_messages_per_peer &&
+                    outbound_gossip_count < kMaximumGossipOutboundMessages &&
+                    outbound_gossip_bytes <= kMaximumGossipOutboundBytes &&
+                    payload.size() <= kMaximumGossipOutboundBytes - outbound_gossip_bytes &&
+                    outbound_count < kMaximumRaftOutboundMessages &&
+                    outbound_bytes <= kMaximumRaftOutboundBytes &&
+                    payload.size() <= kMaximumRaftOutboundBytes - outbound_bytes;
+                // Queue pressure defers this durable mempool transaction. The
+                // periodic pump retries admission; it is not counted as lost.
+                if (!capacity_available) break;
+
+                OutboundMessage item;
+                item.kind = OutboundMessage::Kind::Transaction;
+                item.transaction_payload = payload;
+                item.transaction_id = transaction_id;
+                item.encoded_size = payload.size();
+                queue.gossip.push_back(std::move(item));
+                pending.insert(transaction_id);
+                ++outbound_count;
+                ++outbound_gossip_count;
+                outbound_bytes += payload.size();
+                outbound_gossip_bytes += payload.size();
+            }
+        }
+        outbound_condition.notify_all();
+    }
+
+    void pump_pending_gossip_if_due() {
+        if (!raft_configuration.has_value()) return;
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_gossip_scan < std::chrono::milliseconds(250)) return;
+        last_gossip_scan = now;
+        // Mempool admission is durable and already bounded to 10,000 entries /
+        // 32 MiB. Re-scanning it applies backpressure without making the RAM
+        // dispatch queue proportional to the full mempool size.
+        enqueue_transactions(ledger.mempool().transactions());
+    }
+
+    void mark_gossip_delivered(const std::string& peer_id, const std::string& transaction_id) {
+        auto& delivered = delivered_gossip_ids[peer_id];
+        auto& order = delivered_gossip_order[peer_id];
+        if (delivered.insert(transaction_id).second) order.push_back(transaction_id);
+        constexpr std::size_t kMaximumDeliveredIdsPerPeer = ledger::kMaximumMempoolTransactions * 2U;
+        while (order.size() > kMaximumDeliveredIdsPerPeer) {
+            delivered.erase(order.front());
+            order.pop_front();
+        }
     }
 
     void start_dispatcher() {
@@ -1845,6 +2095,12 @@ struct NodeServer::Impl {
         {
             std::lock_guard queue_lock(outbound_mutex);
             outbound_stopping = false;
+        }
+        if (!startup_gossip_enqueued) {
+            startup_gossip_enqueued = true;
+            // The durable mempool is the restart recovery source for any
+            // transaction whose previous process-local dispatch queue vanished.
+            enqueue_transactions(ledger.mempool().transactions());
         }
         const std::size_t worker_count = std::min(raft_configuration->outbound_worker_count, raft_endpoints.size());
         for (std::size_t index = 0; index < worker_count; ++index) {
@@ -1860,12 +2116,24 @@ struct NodeServer::Impl {
             outbound_stopping = true;
             for (auto& [peer_id, queue] : outbound_queues) {
                 auto& counters = peer_counters[peer_id];
-                counters.dropped += queue.size();
-                outbound_dropped += queue.size();
-                queue.clear();
+                for (const auto& item : queue.raft) {
+                    outbound_bytes -= item.encoded_size;
+                    --outbound_count;
+                    ++counters.dropped;
+                    ++outbound_dropped;
+                }
+                for (const auto& item : queue.gossip) {
+                    outbound_bytes -= item.encoded_size;
+                    outbound_gossip_bytes -= item.encoded_size;
+                    --outbound_count;
+                    --outbound_gossip_count;
+                    pending_gossip_ids[peer_id].erase(item.transaction_id);
+                    ++counters.dropped;
+                    ++outbound_dropped;
+                }
+                queue.raft.clear();
+                queue.gossip.clear();
             }
-            outbound_count = 0;
-            outbound_bytes = 0;
         }
         outbound_condition.notify_all();
         for (auto& worker : dispatchers) {
@@ -1891,7 +2159,9 @@ struct NodeServer::Impl {
             for (auto it = outbound_queues.begin(); it != begin; ++it) order.push_back(it->first);
             for (const auto& peer_id : order) {
                 auto queue = outbound_queues.find(peer_id);
-                if (queue == outbound_queues.end() || queue->second.empty() || in_flight_peers.contains(peer_id)) continue;
+                if (queue == outbound_queues.end() ||
+                    (queue->second.raft.empty() && queue->second.gossip.empty()) ||
+                    in_flight_peers.contains(peer_id)) continue;
                 RaftPeerEndpoint endpoint;
                 {
                     std::lock_guard endpoint_lock(endpoint_mutex);
@@ -1899,18 +2169,43 @@ struct NodeServer::Impl {
                     if (found == raft_endpoints.end() || !found->second.enabled) continue;
                     endpoint = found->second;
                 }
-                const auto retry_after = peer_counters[peer_id].retry_after;
-                if (retry_after > now) {
-                    if (!earliest_retry || retry_after < *earliest_retry) earliest_retry = retry_after;
+
+                const auto& counters = peer_counters[peer_id];
+                const bool raft_waiting = !queue->second.raft.empty();
+                const bool gossip_waiting = !queue->second.gossip.empty();
+                const bool raft_ready = raft_waiting && counters.retry_after <= now;
+                const bool gossip_ready = gossip_waiting && counters.gossip_retry_after <= now;
+                // Serve up to eight consecutive Raft messages before allowing
+                // one gossip message for this peer. Raft keeps priority without
+                // permitting a permanent gossip starvation condition.
+                constexpr std::size_t kMaximumRaftDispatchStreak = 8;
+                const bool take_raft = raft_ready &&
+                    (!gossip_ready || queue->second.consecutive_raft_dispatches < kMaximumRaftDispatchStreak);
+                if (!take_raft && !gossip_ready) {
+                    if (raft_waiting && counters.retry_after > now &&
+                        (!earliest_retry || counters.retry_after < *earliest_retry)) {
+                        earliest_retry = counters.retry_after;
+                    }
+                    if (gossip_waiting && counters.gossip_retry_after > now &&
+                        (!earliest_retry || counters.gossip_retry_after < *earliest_retry)) {
+                        earliest_retry = counters.gossip_retry_after;
+                    }
                     continue;
                 }
                 DispatchWork work;
                 work.peer_id = peer_id;
                 work.endpoint = std::move(endpoint);
-                work.item = std::move(queue->second.front());
-                queue->second.pop_front();
-                --outbound_count;
-                outbound_bytes -= work.item.encoded_size;
+                if (take_raft) {
+                    work.item = std::move(queue->second.raft.front());
+                    queue->second.raft.pop_front();
+                    ++queue->second.consecutive_raft_dispatches;
+                } else {
+                    work.item = std::move(queue->second.gossip.front());
+                    queue->second.gossip.pop_front();
+                    queue->second.consecutive_raft_dispatches = 0;
+                }
+                // Counts and bytes include in-flight work. This reserves the
+                // capacity needed to requeue a failed send without losing it.
                 in_flight_peers.insert(peer_id);
                 scheduler_cursor = peer_id;
                 ++peer_counters[peer_id].attempts;
@@ -1930,6 +2225,7 @@ struct NodeServer::Impl {
             }
             if (!work) return;
             bool succeeded = false;
+            bool retryable_failure = true;
             std::string failure;
             try {
                 if (!authentication.has_value()) throw std::logic_error("Raft outbound dispatcher has no peer authentication");
@@ -1942,31 +2238,92 @@ struct NodeServer::Impl {
                 client_auth.expected_peer_id = work->peer_id;
                 PeerClient peer(work->endpoint.host, work->endpoint.port,
                                 std::move(client_auth), raft_configuration->outbound_timeout);
-                peer.send_raft_message(chain_parameters, work->item.message);
-                succeeded = true;
+                if (work->item.kind == OutboundMessage::Kind::Raft) {
+                    peer.send_raft_message(chain_parameters, work->item.raft_message);
+                    succeeded = true;
+                } else {
+                    const auto transaction = ledger::Transaction::deserialize(work->item.transaction_payload);
+                    if (!peer.send_gossip_transaction(chain_parameters, transaction, &failure)) {
+                        retryable_failure = false;
+                    } else {
+                        succeeded = true;
+                    }
+                }
             } catch (const std::exception& exception) {
                 failure = exception.what();
             } catch (...) {
                 failure = "unknown outbound peer failure";
             }
+
             {
                 std::lock_guard lock(outbound_mutex);
                 in_flight_peers.erase(work->peer_id);
                 auto& counters = peer_counters[work->peer_id];
+                bool endpoint_enabled = false;
+                {
+                    std::lock_guard endpoint_lock(endpoint_mutex);
+                    const auto endpoint = raft_endpoints.find(work->peer_id);
+                    endpoint_enabled = endpoint != raft_endpoints.end() && endpoint->second.enabled;
+                }
+
                 if (succeeded) {
                     ++counters.successes;
                     counters.consecutive_failures = 0;
                     counters.last_success_unix_ms = unix_time_ms();
-                    counters.retry_after = {};
+                    if (work->item.kind == OutboundMessage::Kind::Raft) {
+                        counters.raft_consecutive_failures = 0;
+                        counters.retry_after = {};
+                    } else {
+                        counters.gossip_consecutive_failures = 0;
+                        counters.gossip_retry_after = {};
+                    }
+                    counters.consecutive_failures = std::max(counters.raft_consecutive_failures,
+                                                              counters.gossip_consecutive_failures);
                     counters.last_error.clear();
+                    outbound_bytes -= work->item.encoded_size;
+                    --outbound_count;
+                    if (work->item.kind == OutboundMessage::Kind::Transaction) {
+                        outbound_gossip_bytes -= work->item.encoded_size;
+                        --outbound_gossip_count;
+                        pending_gossip_ids[work->peer_id].erase(work->item.transaction_id);
+                        mark_gossip_delivered(work->peer_id, work->item.transaction_id);
+                    }
                 } else {
                     ++counters.failures;
-                    if (counters.consecutive_failures < UINT32_MAX) ++counters.consecutive_failures;
+                    auto& class_failures = work->item.kind == OutboundMessage::Kind::Raft
+                        ? counters.raft_consecutive_failures : counters.gossip_consecutive_failures;
+                    if (class_failures < UINT32_MAX) ++class_failures;
+                    counters.consecutive_failures = std::max(counters.raft_consecutive_failures,
+                                                              counters.gossip_consecutive_failures);
                     counters.last_failure_unix_ms = unix_time_ms();
-                    const std::uint32_t shift = std::min<std::uint32_t>(counters.consecutive_failures - 1U, 5U);
+                    const std::uint32_t shift = std::min<std::uint32_t>(class_failures - 1U, 5U);
                     const std::uint64_t delay_ms = std::min<std::uint64_t>(250U << shift, 8000U);
-                    counters.retry_after = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
+                    const auto retry = std::chrono::steady_clock::now() + std::chrono::milliseconds(delay_ms);
+                    if (work->item.kind == OutboundMessage::Kind::Raft) counters.retry_after = retry;
+                    else counters.gossip_retry_after = retry;
                     counters.last_error = failure.substr(0, 256);
+
+                    if (outbound_stopping || !endpoint_enabled || !retryable_failure) {
+                        outbound_bytes -= work->item.encoded_size;
+                        --outbound_count;
+                        ++counters.dropped;
+                        ++outbound_dropped;
+                        if (work->item.kind == OutboundMessage::Kind::Transaction) {
+                            outbound_gossip_bytes -= work->item.encoded_size;
+                            --outbound_gossip_count;
+                            pending_gossip_ids[work->peer_id].erase(work->item.transaction_id);
+                            if (!retryable_failure) {
+                                mark_gossip_delivered(work->peer_id, work->item.transaction_id);
+                            }
+                        }
+                    } else {
+                        auto& queue = outbound_queues[work->peer_id];
+                        if (work->item.kind == OutboundMessage::Kind::Raft) {
+                            queue.raft.push_front(std::move(work->item));
+                        } else {
+                            queue.gossip.push_front(std::move(work->item));
+                        }
+                    }
                 }
             }
             outbound_condition.notify_all();
@@ -1991,7 +2348,9 @@ struct NodeServer::Impl {
             peer.enabled = endpoint.enabled;
             peer.in_flight = in_flight_peers.contains(peer_id);
             const auto queue = outbound_queues.find(peer_id);
-            peer.queued_messages = queue == outbound_queues.end() ? 0U : queue->second.size();
+            peer.queued_messages = queue == outbound_queues.end() ? 0U :
+                queue->second.raft.size() + queue->second.gossip.size() +
+                (in_flight_peers.contains(peer_id) ? 1U : 0U);
             const auto counter = peer_counters.find(peer_id);
             if (counter != peer_counters.end()) {
                 peer.attempts = counter->second.attempts;
@@ -2002,9 +2361,16 @@ struct NodeServer::Impl {
                 peer.last_success_unix_ms = counter->second.last_success_unix_ms;
                 peer.last_failure_unix_ms = counter->second.last_failure_unix_ms;
                 peer.last_error = counter->second.last_error;
-                if (counter->second.retry_after > now) {
+                std::optional<std::chrono::steady_clock::time_point> next_retry;
+                for (const auto candidate : {counter->second.retry_after,
+                                             counter->second.gossip_retry_after}) {
+                    if (candidate > now && (!next_retry || candidate < *next_retry)) {
+                        next_retry = candidate;
+                    }
+                }
+                if (next_retry) {
                     peer.retry_delay_ms = static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::milliseconds>(counter->second.retry_after - now).count());
+                        std::chrono::duration_cast<std::chrono::milliseconds>(*next_retry - now).count());
                 }
             }
             result.peers.push_back(std::move(peer));
@@ -2043,18 +2409,27 @@ struct NodeServer::Impl {
         if (!enabled) {
             auto queue = outbound_queues.find(peer_id);
             if (queue != outbound_queues.end()) {
-                const auto removed = queue->second.size();
-                for (const auto& item : queue->second) {
+                const auto removed_raft = queue->second.raft.size();
+                const auto removed_gossip = queue->second.gossip.size();
+                for (const auto& item : queue->second.raft) outbound_bytes -= item.encoded_size;
+                for (const auto& item : queue->second.gossip) {
                     outbound_bytes -= item.encoded_size;
+                    outbound_gossip_bytes -= item.encoded_size;
+                    pending_gossip_ids[peer_id].erase(item.transaction_id);
                 }
-                outbound_count -= removed;
-                queue->second.clear();
-                peer_counters[peer_id].dropped += removed;
-                outbound_dropped += removed;
+                outbound_count -= removed_raft + removed_gossip;
+                outbound_gossip_count -= removed_gossip;
+                queue->second.raft.clear();
+                queue->second.gossip.clear();
+                peer_counters[peer_id].dropped += removed_raft + removed_gossip;
+                outbound_dropped += removed_raft + removed_gossip;
             }
         } else {
             peer_counters[peer_id].consecutive_failures = 0;
+            peer_counters[peer_id].raft_consecutive_failures = 0;
+            peer_counters[peer_id].gossip_consecutive_failures = 0;
             peer_counters[peer_id].retry_after = {};
+            peer_counters[peer_id].gossip_retry_after = {};
             peer_counters[peer_id].last_error.clear();
         }
         outbound_condition.notify_all();
@@ -2066,6 +2441,11 @@ struct NodeServer::Impl {
     std::chrono::milliseconds timeout;
     std::optional<PeerAuthConfig> authentication;
     std::optional<RaftNetworkConfig> raft_configuration;
+    InboundAdmissionConfig inbound_admission;
+    std::mutex admission_mutex;
+    double global_inbound_tokens{0.0};
+    std::chrono::steady_clock::time_point global_inbound_updated{std::chrono::steady_clock::now()};
+    std::map<std::string, InboundTokenBucket> inbound_address_buckets;
     std::mutex trust_store_mutex;
     std::unique_ptr<consensus::RaftLedgerAdapter> raft_adapter;
     std::set<std::string> raft_members;
@@ -2077,14 +2457,21 @@ struct NodeServer::Impl {
     PeerChainParameters chain_parameters{};
     std::mutex outbound_mutex;
     std::condition_variable outbound_condition;
-    std::map<std::string, std::deque<OutboundRaftMessage>> outbound_queues;
+    std::map<std::string, PeerQueues> outbound_queues;
+    std::map<std::string, std::set<std::string>> pending_gossip_ids;
+    std::map<std::string, std::set<std::string>> delivered_gossip_ids;
+    std::map<std::string, std::deque<std::string>> delivered_gossip_order;
+    std::chrono::steady_clock::time_point last_gossip_scan{};
     std::map<std::string, PeerCounters> peer_counters;
     std::set<std::string> in_flight_peers;
     std::string scheduler_cursor;
     std::size_t outbound_count{0};
     std::size_t outbound_bytes{0};
+    std::size_t outbound_gossip_count{0};
+    std::size_t outbound_gossip_bytes{0};
     std::uint64_t outbound_dropped{0};
     bool outbound_stopping{false};
+    bool startup_gossip_enqueued{false};
     std::mutex dispatcher_lifecycle_mutex;
     std::vector<std::thread> dispatchers;
     boost::asio::io_context io;
@@ -2094,13 +2481,16 @@ struct NodeServer::Impl {
     std::atomic<RunState> run_state{RunState::Created};
 };
 NodeServer::NodeServer(ledger::Ledger& ledger, const std::string& bind_address,
-                       std::uint16_t port, std::chrono::milliseconds timeout)
-    : impl_(std::make_unique<Impl>(ledger, bind_address, port, timeout)) {}
+                       std::uint16_t port, std::chrono::milliseconds timeout,
+                       InboundAdmissionConfig admission)
+    : impl_(std::make_unique<Impl>(ledger, bind_address, port, timeout, std::nullopt,
+                                   std::nullopt, std::move(admission))) {}
 
 NodeServer::NodeServer(ledger::Ledger& ledger, const std::string& bind_address,
                        std::uint16_t port, PeerAuthConfig authentication,
-                       std::chrono::milliseconds timeout)
-    : impl_(std::make_unique<Impl>(ledger, bind_address, port, timeout, std::move(authentication))) {
+                       std::chrono::milliseconds timeout, InboundAdmissionConfig admission)
+    : impl_(std::make_unique<Impl>(ledger, bind_address, port, timeout,
+                                   std::move(authentication), std::nullopt, std::move(admission))) {
     if (!impl_->authentication->identity) throw std::invalid_argument("authenticated node server requires a node identity");
     if (impl_->authentication->trusted_peers.size() == 0) {
         throw std::invalid_argument("authenticated node server requires at least one trusted peer");
@@ -2126,11 +2516,18 @@ std::uint16_t NodeServer::port() const noexcept { return impl_->bound_port; }
 
 void NodeServer::serve_one() {
     impl_->start_dispatcher();
+    impl_->pump_pending_gossip_if_due();
     tcp::socket socket(impl_->io);
     ErrorCode error;
     impl_->acceptor.accept(socket, error);
     if (error == boost::asio::error::would_block || error == boost::asio::error::try_again) return;
     if (error) throw boost::system::system_error(error, "accept peer connection");
+    if (!impl_->admit_connection(socket)) {
+        ErrorCode ignored;
+        socket.shutdown(tcp::socket::shutdown_both, ignored);
+        socket.close(ignored);
+        return;
+    }
     std::optional<RaftServerContext> raft_context;
     if (impl_->raft_adapter) {
         raft_context.emplace();
@@ -2139,6 +2536,10 @@ void NodeServer::serve_one() {
         raft_context->local_peer_id = impl_->local_peer_id;
         raft_context->enqueue = [implementation = impl_.get()](std::vector<consensus::RaftMessage> messages) {
             implementation->enqueue_raft_messages(messages);
+        };
+        raft_context->enqueue_transaction = [implementation = impl_.get()](
+            const ledger::Transaction& transaction, const std::string& source_peer) {
+            implementation->enqueue_transaction(transaction, source_peer);
         };
         raft_context->apply_trust_policy = [implementation = impl_.get()](
             const std::string& signer_peer_id, const Bytes& bundle) {
