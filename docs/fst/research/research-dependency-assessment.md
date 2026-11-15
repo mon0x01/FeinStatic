@@ -19,15 +19,18 @@ is selected.
 ## 1. Research Register Review
 
 The research register tracks 15 entries (RS-001 through RS-015), all classified OPEN.
-Three entries (RS-013, RS-014, RS-015) have dedicated research documents. RS-014 records that
+Four entries (RS-002, RS-013, RS-014, RS-015) have dedicated research documents. RS-014 records that
 implementation was begun in Milestones 2C–2D (node identity, signed records, peer store,
 bootstrap discovery, peer exchange, TLS 1.3 secure sessions, message dispatch, network
 runtime), but the research document itself remains OPEN — no Noise handshake pattern,
-DHT adoption, or post-quantum agility is selected.
+DHT adoption, or post-quantum agility is selected. RS-015 (transaction model) is complete as
+a research deliverable but remains OPEN RESEARCH pending owner selection of the transaction
+model.
 
-All other entries (RS-001 through RS-012) have "TBD" sources and no dedicated research
-documents. They are recorded as research topics with design implications but no
-substantive survey.
+All other entries (RS-001, RS-003 through RS-012) have "TBD" sources and no dedicated
+research documents (RS-001 coverage is provided by RS-013's consensus document; RS-002 has
+a dedicated Sybil-resistance document). They are recorded as research topics with design
+implications but no substantive survey beyond what is recorded in RS-013 and RS-002.
 
 ## 2. Research Items That Directly Block Later Development
 
@@ -62,29 +65,24 @@ open (Section 8) pending this research.
 
 ### Priority 2 — Permissionless consensus and Sybil resistance (blocks: Milestone 3 test network)
 
-**Research entries:** RS-001 (consensus algorithms), RS-002 (Sybil-resistance mechanisms).
+**Research entries:** RS-001 (consensus algorithms, covered by docs/fst/research/consensus-validator-research.md), RS-002 (Sybil-resistance mechanisms, docs/fst/research/sybil-resistance-research.md).
 
 **Classification:** OPEN RESEARCH (D-016 PROVISIONAL, D-017 OPEN RESEARCH).
 
 **What it blocks:**
-- Milestone 3 (minimal permissionless test network with Byzantine fault-tolerant
-  finality).
+- Milestone 3 (minimal permissionless test network with Byzantine fault-tolerant finality).
 - Validator-capable node role (node-roles.md Section 6, future architectural role).
-- Consensus message types and agreement/ordering (core protocol specification Section 7,
-  unresolved).
+- Consensus message types and agreement/ordering (core protocol specification Section 7, unresolved).
 - Block format and finality rules (core protocol specification Section 9, unresolved).
 - Fork choice and state-machine execution (RS-013 taxonomy components 2.7, 2.9).
 
 **Dependencies:**
-- Depends on transaction model (Priority 1): consensus orders transactions, so the
-  transaction format must be at least provisionally specified before consensus can
-  reference it.
-- Depends on Sybil resistance (RS-002): without Sybil resistance, quorum thresholds and
-  Byzantine fault bounds are meaningless (consensus-validator-research.md Section 3.3).
+- Depends on transaction model (Priority 1): consensus orders transactions, so the transaction format must be at least provisionally specified before consensus can reference it.
+- Depends on Sybil resistance (RS-002): without Sybil resistance, quorum thresholds and Byzantine fault bounds are meaningless (consensus-validator-research.md Section 3.3; sybil-resistance-research.md Section 3).
 
-**Why priority 2:** Consensus is the gating item for Milestone 3. Sybil resistance must be
-resolved in parallel because it determines the validator admission model, which shapes
-consensus design.
+**Status of research:** RS-013 has been deepened (Milestone 2G) with consensus–Sybil composition analysis (Section 18), network and financial requirements (Section 19), monetary and economic dependencies (Section 20), transaction-model dependencies (Section 21), and verified source records (Section 22). RS-002 has been created as a dedicated document covering seven Sybil-resistance mechanisms, concept distinctions, attack analysis, and seven consensus–Sybil compositions. Both documents remain OPEN RESEARCH; no consensus algorithm, Sybil-resistance mechanism, Byzantine threshold, or finality model is selected.
+
+**Why priority 2:** Consensus is the gating item for Milestone 3. Sybil resistance must be resolved in parallel because it determines the validator admission model, which shapes consensus design.
 
 ### Priority 3 — Privacy architecture (blocks: privacy layer, transaction confidentiality)
 
@@ -283,6 +281,10 @@ Consensus + Sybil resistance (P2)
   ├── Light-client proofs (P8) — state commitments over blocks
   └── Governance/upgrades (P9) — upgrade signaling
 
+RS-002 (Sybil-resistance mechanisms) is a dedicated research document
+and is a peer of RS-001 within Priority 2; both must be resolved before
+Milestone 3 test-network design.
+
 Protocol specification (Milestone 2E, complete)
   └── Independent client implementations (P10)
 ```
@@ -320,9 +322,11 @@ No OPEN RESEARCH or PROVISIONAL decision is converted to APPROVED.
 ## 6. Recommendations for the Next Milestone
 
 1. **Complete the transaction model research** (Priority 1) before specifying transaction
-   message types or mempool behavior.
+   message types or mempool behavior. RS-015 is complete as a research deliverable but
+   remains OPEN RESEARCH pending owner selection.
 2. **Complete consensus and Sybil-resistance research** (Priority 2) before Milestone 3
-   test network design.
+   test network design. RS-013 and RS-002 are now dedicated research documents but both
+   remain OPEN RESEARCH; no consensus algorithm or Sybil-resistance mechanism is selected.
 3. **Do not implement** any consensus, validator, monetary policy, or transaction
    processing functionality in the next milestone unless an approved ADR and design
    review exists (prohibited actions, AGENTS.md).
