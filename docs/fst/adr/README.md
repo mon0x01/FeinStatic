@@ -42,7 +42,7 @@ Never convert a discussion or suggestion into an approved design without owner a
 
 | ID | Status | Title | Date | Classification | Supersedes |
 |----|--------|-------|------|----------------|------------|
-| — | — | No ADRs recorded yet | — | — | — |
+| ADR-0001 | PROPOSED | Candidate-neutral multi-node network integration and fault-injection test harness | 2026-11-15 | OPEN RESEARCH pending owner review | — |
 
 ## How to create a new ADR
 
