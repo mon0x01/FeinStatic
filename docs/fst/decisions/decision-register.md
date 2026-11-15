@@ -36,8 +36,8 @@ investigation and discussion.
 | D-013 | 2026-11-15 | Small, tested, documented releases | APPROVED | Releases after approximately two or three new features. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
 | D-014 | 2026-11-15 | Native currency scope: FST only | APPROVED | Initial on-network asset scope is FST only. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
 | D-015 | 2026-11-15 | Monetary policy open research | OPEN RESEARCH | Supply, issuance, monetary policy, and market-value model unresolved. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
-| D-016 | 2026-11-15 | Permissionless validator participation | PROVISIONAL | Preferred direction; exact mechanism unresolved. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
-| D-017 | 2026-11-15 | Byzantine fault tolerance research direction | OPEN RESEARCH | BFT is an important research direction, not a selected implementation. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
+| D-016 | 2026-11-15 | Permissionless validator participation | PROVISIONAL | Preferred direction; exact mechanism unresolved. Research: RS-013. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
+| D-017 | 2026-11-15 | Byzantine fault tolerance research direction | OPEN RESEARCH | BFT is an important research direction, not a selected implementation. Research: RS-013. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
 | D-018 | 2026-11-15 | Offline financial operation | PROVISIONAL | Bounded offline spending, local operation, reconciliation; trade-offs unresolved. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
 | D-019 | 2026-11-15 | Modular multi-transport communication | PROVISIONAL | Internet, mesh, radio, satellite, delay-tolerant; incremental introduction. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
 | D-020 | 2026-11-15 | Strong cryptographic privacy | PROVISIONAL | Approved direction; specific mechanisms unresolved. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |

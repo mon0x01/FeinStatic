@@ -38,6 +38,7 @@ Each research entry follows this structure:
 | RS-010 | OPEN | Governance and on-chain upgrades | TBD | Upgrade signaling, participant veto, fork legitimacy |
 | RS-011 | OPEN | Compliance | TBD | Regulatory boundaries, jurisdictional differences, protocol vs service-provider responsibilities, fiat on/off-ramp requirements, custodian/exchange/liquidity-provider compliance, lawful services without unilateral protocol control |
 | RS-012 | OPEN | Independent client implementation count | TBD | Research one, two, or three independent client implementations before mainnet |
+| RS-013 | OPEN | Permissionless consensus and validator architecture | TBD | Consensus family comparison, validator membership, Sybil resistance, validator economics, network resilience, security assumptions, formal verification, existing implementations |
 
 ## How to add a new entry
 
