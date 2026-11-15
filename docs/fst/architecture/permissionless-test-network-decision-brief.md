@@ -2,7 +2,7 @@
 
 **Status:** DRAFT — owner decision brief, not an approved decision package.
 **Classification:** OPEN RESEARCH / PROVISIONAL as recorded (no decision is approved by this document).
-**Related decisions:** D-015 (OPEN RESEARCH), D-016 (PROVISIONAL), D-017 (OPEN RESEARCH), D-018 (PROVISIONAL), D-019 (PROVISIONAL), D-024 (PROVISIONAL), D-035 (OPEN RESEARCH), D-036 (APPROVED).
+**Related decisions:** D-015 (OPEN RESEARCH), D-016 (PROVISIONAL), D-017 (OPEN RESEARCH), D-018 (PROVISIONAL), D-019 (PROVISIONAL), D-024 (PROVISIONAL), D-035 (OPEN RESEARCH), D-036 (APPROVED), D-037 (OPEN RESEARCH).
 **Related research:** RS-001 (consensus), RS-002 (Sybil resistance), RS-013 (consensus–validator), RS-015 (transaction model).
 **Related documents:** `docs/fst/security/adversary-model-v0.1.md` (FST adversary model), `docs/fst/architecture/permissionless-test-network-evaluation.md` (deep candidate evaluation).
 
@@ -10,7 +10,7 @@ This document prepares **owner decision briefs** for six decision areas required
 
 **No owner decision has been approved.** No consensus algorithm, Sybil-resistance mechanism, Byzantine threshold, finality model, or transaction model is selected, recommended for implementation, or silently approved here. All alternatives remain open.
 
-## Decision brief 1 — Transaction model (RS-015; related: D-015, D-036)
+## Decision brief 1 — Transaction model (RS-015; related: D-037, D-036)
 
 ### Available alternatives
 Research RS-015 evaluates four models; two are credible candidates for FST's payment scope (native FST transfers, P2P, merchant, institutional, batch):
@@ -48,11 +48,11 @@ Research RS-015 evaluates four models; two are credible candidates for FST's pay
 - What fee policy and fee market (D-015)?
 
 ### Research needed before implementation
-- RS-015 is complete as a research deliverable but remains OPEN RESEARCH pending owner selection (D-015).
+- RS-015 is complete as a research deliverable but remains OPEN RESEARCH pending owner selection (D-037).
 - Full-paper inspection of RS-015's primary sources (Bitcoin devguide, Ethereum EIP-155/EIP-1559, Cardano eUTXO, Nervos CKB) to confirm technical claims (RS-015 records these as inspected; verification status varies).
 - Transaction serialization format (core spec Section 8) cannot be specified before this decision.
 
-**Owner decision required:** Select transaction model (or retain both as sensitivity cases). **Not approved.** D-015 remains OPEN RESEARCH.
+**Owner decision required:** Select transaction model (or retain both as sensitivity cases). **Not approved.** D-037 remains OPEN RESEARCH.
 
 ---
 
@@ -253,7 +253,7 @@ A minimal, internet-connected, permissionless test network (initial assumption: 
 **Candidate-specific (TN-C1, TN-C3, TN-C5):** stake bonding/unbonding, PoW difficulty adjustment, LMD-GHOST/Casper FFG checkpoints, leader DoS mitigation, slashing evidence, weak-subjectivity handling — all parameter values unresolved.
 
 ### Decisions that must be approved before implementation (TN §4.3)
-- Transaction model (RS-015, D-015 OPEN RESEARCH)
+- Transaction model (RS-015, D-037 OPEN RESEARCH)
 - Sybil-resistance mechanism (RS-002, D-016 PROVISIONAL)
 - Consensus algorithm (RS-001/RS-013, D-017 OPEN RESEARCH)
 - Finality model (D-017 OPEN RESEARCH)
@@ -288,13 +288,13 @@ Byzantine validator behaviour, validator collusion, node failures, message loss/
 
 | Decision area | Related decision | Classification | Status |
 |---------------|-----------------|----------------|--------|
-| Transaction model | RS-015, D-015 | OPEN RESEARCH | Unresolved; owner decision required |
+| Transaction model | RS-015, D-037 | OPEN RESEARCH | Unresolved; owner decision required |
 | Sybil-resistance mechanism | RS-002, D-016 | PROVISIONAL | Direction approved; mechanism unresolved |
 | Consensus architecture | RS-001/RS-013, D-017 | OPEN RESEARCH | Unresolved; owner decision required |
 | Finality model | D-017 | OPEN RESEARCH | Unresolved; owner decision required |
 | Adversary assumptions / thresholds | adversary-model-v0.1.md | OPEN RESEARCH | Parameterized, not constants; owner decision required per candidate |
 | Test-network security boundaries | This brief | OPEN RESEARCH | Requirements-level only; owner approval required before implementation |
 
-**No decision in this brief is approved.** All classifications are preserved: D-015 OPEN RESEARCH, D-016 PROVISIONAL, D-017 OPEN RESEARCH, D-018 PROVISIONAL, D-024 PROVISIONAL, D-035 OPEN RESEARCH, D-036 APPROVED (fork protection requirements only; mechanisms OPEN RESEARCH).
+**No decision in this brief is approved.** All classifications are preserved: D-015 OPEN RESEARCH, D-016 PROVISIONAL, D-017 OPEN RESEARCH, D-018 PROVISIONAL, D-024 PROVISIONAL, D-035 OPEN RESEARCH, D-036 APPROVED (fork protection requirements only; mechanisms OPEN RESEARCH), D-037 OPEN RESEARCH.
 
 Research findings are drawn from RS-001, RS-002, RS-013, RS-015 and the adversary model, with source-verification statuses recorded per RS-002 §8 / RS-013 §16. Owner decisions remain entirely with the project owner and are not implied by any content here.

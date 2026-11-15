@@ -264,7 +264,7 @@ All economic claims are qualitative design concerns per RS-013 §20; D-015 OPEN 
 
 ## 3. Transaction-model sensitivity analysis
 
-**Source:** RS-015 (`docs/fst/research/transaction-model-research.md`), complete as a research deliverable but OPEN RESEARCH pending owner selection (D-015 OPEN RESEARCH). RS-013 §21 (transaction-model dependencies). No transaction model is selected or approved here.
+**Source:** RS-015 (`docs/fst/research/transaction-model-research.md`), complete as a research deliverable but OPEN RESEARCH pending owner selection (D-037 OPEN RESEARCH). RS-013 §21 (transaction-model dependencies). No transaction model is selected or approved here.
 
 RS-015 compares two credible candidates for FST: (1) traditional UTXO, and (2) account-based with nonce and chain-ID protection. (eUTXO and hybrid/object-cell are also surveyed but not the primary sensitivity cases.) Both remain available for architectural sensitivity analysis per the mission (RS-015 completed but unresolved).
 
@@ -304,7 +304,7 @@ RS-015 compares two credible candidates for FST: (1) traditional UTXO, and (2) a
 
 - **UTXO** is structurally better aligned with probabilistic finality (C3) and with stateless, parallel validation (all candidates). Its reorg handling (re-unspend outputs) is clean.
 - **Account-based** is structurally better aligned with institutional multi-input batching and simple wallet UX, but its nonce ordering couples validity to chain position, increasing reorg/replay complexity under probabilistic finality and weak subjectivity.
-- **Neither model is selected.** RS-015 remains OPEN RESEARCH pending owner selection (D-015 OPEN RESEARCH). Both UTXO and account-based remain available as sensitivity cases for consensus evaluation, per the mission.
+- **Neither model is selected.** RS-015 remains OPEN RESEARCH pending owner selection (D-037 OPEN RESEARCH). Both UTXO and account-based remain available as sensitivity cases for consensus evaluation, per the mission.
 - **Dissemination:** Gossip-based in all models; propagation scope (gossip vs. direct to proposers) is unresolved (RS-013 component 2.5; RS-015 §5.13). Narwhal-style DAG dissemination separates dissemination from consensus [NarwhalTusk2022 S10; RS-013 §2.5] — relevant if C6 were later selected, but not for the shortlisted candidates.
 - **Finality interactions:** Deterministic finality (C1, C5) reduces transaction-reorg/replay risk vs probabilistic finality (C3). This is a cross-cutting sensitivity point independent of the transaction-model choice.
 
@@ -357,7 +357,7 @@ This section derives a requirements-level architecture for a minimal permissionl
 
 | Decision | Related | Classification |
 |----------|---------|----------------|
-| Transaction model (UTXO vs account-based) | RS-015, D-015 | OPEN RESEARCH |
+| Transaction model (UTXO vs account-based) | RS-015, D-037 | OPEN RESEARCH |
 | Sybil-resistance mechanism | RS-002, D-016 | PROVISIONAL (mechanism unresolved) |
 | Consensus algorithm | RS-001/RS-013, D-017 | OPEN RESEARCH |
 | Finality model (deterministic vs probabilistic) | D-017 | OPEN RESEARCH |
@@ -489,7 +489,7 @@ The candidates remain **incomparable without owner decisions** on finality model
 All of the following remain OPEN RESEARCH; none is resolved by this evaluation:
 
 1. FST explicit adversary model parameters (`f_bft`, `h_stake`, `h_pow`, `q_finality`) — adversary-model-v0.1.md §10.
-2. Transaction model (UTXO vs account-based) — RS-015, D-015 OPEN RESEARCH.
+2. Transaction model (UTXO vs account-based) — RS-015, D-037 OPEN RESEARCH.
 3. Sybil-resistance mechanism — RS-002, D-016 PROVISIONAL.
 4. Consensus algorithm — RS-001/RS-013, D-017 OPEN RESEARCH.
 5. Finality model and settlement latency — D-017 OPEN RESEARCH.

@@ -399,7 +399,7 @@ it does not define transaction format, validity rules, fee markets, or mempool p
 ### 8.3 What is NOT specified
 
 - Transaction serialization format (unresolved).
-- Account vs. UTXO model (unresolved, D-016/D-015).
+- Account vs. UTXO model (unresolved, D-037).
 - Fee market and prioritization (unresolved).
 - Mempool size, eviction, and replacement policy (unresolved).
 - Replay protection at the transaction level (nonce or alternative; unresolved;

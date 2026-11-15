@@ -1399,7 +1399,7 @@ Analyzed per the mission; sensitivity analysis used rather than invented monetar
 
 ## 21. Transaction-model dependencies
 
-RS-015 (transaction-model-research.md) is complete as a research deliverable but remains OPEN RESEARCH pending owner selection (D-015 OPEN RESEARCH; RS-015 status OPEN). Both credible RS-015 candidate models (traditional UTXO and account-based) are used as comparison cases; no transaction model is approved or selected.
+RS-015 (transaction-model-research.md) is complete as a research deliverable but remains OPEN RESEARCH pending owner selection (D-037 OPEN RESEARCH; RS-015 status OPEN). Both credible RS-015 candidate models (traditional UTXO and account-based) are used as comparison cases; no transaction model is approved or selected.
 
 Evaluated whether candidate consensus families impose materially different requirements on:
 
