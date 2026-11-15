@@ -1,11 +1,14 @@
 # FST Identity, Peer Discovery and P2P Network Architecture Research
 
 **Research ID:** RS-014 (PROPOSED — see research-register.md)
-**Status:** COMPLETE (research document only; no implementation)
-**Milestone:** FST Milestone 2B — Foundational architecture research
+**Status:** IMPLEMENTATION BEGUN (research document; implementation in Milestone 2C)
+**Milestone:** FST Milestone 2B — Foundational architecture research; implemented in Milestone 2C
 **Scope:** Identity model, peer discovery, network connectivity foundations
-**Constraint:** No networking code is implemented in this milestone. This document is
-research and specification only.
+**Constraint:** The research document remains a specification reference. Implementation code
+is in `src/network/identity.cpp`, `src/network/node_record.cpp`, `src/network/peer_store.cpp`,
+`src/network/bootstrap.cpp`, and `src/network/peer_exchange.cpp`. Research is not marked
+complete; the Noise handshake pattern, DHT adoption, and post-quantum agility remain OPEN
+RESEARCH.
 **Classification:** PROVISIONAL — preferred architectural direction requiring validation;
 not an approved production design. No new project decision is approved by this milestone.
 

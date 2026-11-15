@@ -35,12 +35,17 @@ add_library(feinstatic_core
     src/bridge/bridge_service.cpp
     src/network/node.cpp
     src/network/peer_lifecycle.cpp
+    src/network/peer_identity.cpp
+    src/network/identity.cpp
+    src/network/node_record.cpp
+    src/network/peer_store.cpp
+    src/network/bootstrap.cpp
+    src/network/peer_exchange.cpp
     src/consensus/fork_choice.cpp
     src/consensus/raft.cpp
     src/consensus/raft_membership.cpp
     src/consensus/raft_storage.cpp
     src/consensus/raft_ledger_adapter.cpp
-    src/network/peer_identity.cpp
     src/exchange/matching_engine.cpp
     src/flow/amm.cpp
     src/application/amount.cpp
@@ -105,6 +110,12 @@ if(FEINSTATIC_BUILD_TESTS)
         tests/raft_membership_tests.cpp
         tests/raft_ledger_tests.cpp
         tests/mempool_tests.cpp
+        tests/identity_tests.cpp
+        tests/node_record_tests.cpp
+        tests/peer_store_tests.cpp
+        tests/bootstrap_tests.cpp
+        tests/peer_exchange_tests.cpp
+        tests/network_discovery_tests.cpp
     )
     target_link_libraries(feinstatic_tests PRIVATE FeinStatic::Core)
     add_dependencies(feinstatic_tests feinstatic)
