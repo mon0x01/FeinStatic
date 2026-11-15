@@ -12,6 +12,11 @@ class ByteWriter {
 public:
     void u8(Byte value) { data_.push_back(value); }
 
+    void u16(std::uint16_t value) {
+        data_.push_back(static_cast<Byte>((value >> 8) & 0xffU));
+        data_.push_back(static_cast<Byte>(value & 0xffU));
+    }
+
     void u32(std::uint32_t value) {
         for (int shift = 24; shift >= 0; shift -= 8) {
             data_.push_back(static_cast<Byte>((value >> shift) & 0xffU));
@@ -68,6 +73,13 @@ public:
     explicit ByteReader(const Bytes& data) : data_(data) {}
 
     Byte u8() { require(1); return data_[position_++]; }
+
+    std::uint16_t u16() {
+        require(2);
+        Byte hi = data_[position_++];
+        Byte lo = data_[position_++];
+        return static_cast<std::uint16_t>((static_cast<std::uint16_t>(hi) << 8U) | lo);
+    }
 
     std::uint32_t u32() {
         require(4);

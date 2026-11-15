@@ -59,8 +59,9 @@ FS_TEST(peer_admission_tick_no_sessions) {
     AdmissionController admission(*store, *bootstrap, *authenticator, *exchange,
                                    *tls_ctx, identity, cfg);
 
-    admission.tick(std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count());
+    admission.tick(static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count()));
     FS_REQUIRE(admission.connection_count() == 0);
     FS_REQUIRE(admission.inbound_count() == 0);
     FS_REQUIRE(admission.outbound_count() == 0);

@@ -94,7 +94,6 @@ private:
     std::atomic<bool> stop_requested_{false};
     std::thread tick_thread_;
     std::uint16_t listen_port_{0};
-    std::uint64_t start_time_unix_ms_{0};
 };
 
 } // namespace feinstat::network

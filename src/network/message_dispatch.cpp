@@ -10,7 +10,13 @@ MessageDispatcher::MessageDispatcher(SecureSessionContext& tls_context,
                                       PeerExchange& exchange,
                                       Config config)
     : tls_context_(tls_context), store_(store), exchange_(exchange),
-      config_(std::move(config)) {}
+      config_(std::move(config)) {
+    // tls_context_, store_, and exchange_ are stored for future use;
+    // they are intentionally not referenced in the current implementation.
+    (void)tls_context_;
+    (void)store_;
+    (void)exchange_;
+}
 
 MessageDispatcher::~MessageDispatcher() = default;
 
@@ -85,8 +91,8 @@ std::size_t MessageDispatcher::ping(std::shared_ptr<PeerSession> session,
     ping_times_[reinterpret_cast<std::uint64_t>(session.get())] = now;
     Bytes payload(8, 0);
     auto ns = now.time_since_epoch().count();
-    for (int i = 0; i < 8; ++i) {
-        payload[i] = static_cast<Byte>((ns >> (56 - i * 8)) & 0xff);
+    for (std::size_t i = 0; i < 8; ++i) {
+        payload[i] = static_cast<Byte>((ns >> (56 - static_cast<int>(i) * 8)) & 0xff);
     }
     return send(session, PeerMessageType::kPing, payload, ec);
 }

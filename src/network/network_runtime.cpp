@@ -92,8 +92,9 @@ void NetworkRuntime::stop() noexcept {
 }
 
 void NetworkRuntime::do_tick() {
-    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    auto now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
     admission_->tick(now);
 }
 

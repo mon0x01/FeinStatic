@@ -31,6 +31,7 @@ struct SecureHandshakeResult {
     std::uint16_t protocol_version{0};
     std::vector<std::string> capabilities;
     std::vector<NodeEndpoint> endpoints;
+    Hash session_nonce; // Session nonce bound to this TLS session (replay protection).
 };
 
 struct SecureSessionContextConfig {
@@ -108,8 +109,14 @@ public:
     boost::asio::ip::tcp::socket& socket() noexcept { return ssl_stream_.next_layer(); }
     boost::asio::ssl::stream<boost::asio::ip::tcp::socket>& ssl_stream() noexcept { return ssl_stream_; }
 
+    // Asynchronous accept (server side). Performs TLS 1.3 handshake, then
+    // application-level identity handshake.
     void async_accept(Handler handler,
                       std::optional<NodeId> expected_peer_node_id = std::nullopt);
+
+    // Asynchronous connect (client side). Performs DNS resolution, TCP connect,
+    // TLS 1.3 handshake, then application-level identity handshake. All
+    // operations are non-blocking.
     void async_connect(const std::string& host,
                        std::uint16_t port,
                        Handler handler,
@@ -153,6 +160,12 @@ private:
     bool authenticated_{false};
     SecureHandshakeResult handshake_result_{};
 
+    // Hash of the TLS certificate presented during the live TLS handshake.
+    // Populated by the TLS verify callback during the handshake, compared
+    // against the hash in the application handshake message.
+    Hash live_tls_cert_hash_{};
+    bool live_tls_cert_hash_known_{false};
+
 public:
     // Test-accessible constants.
     static constexpr std::size_t test_kMaxMessageBytes() { return kMaxMessageBytes; }
@@ -164,6 +177,7 @@ private:
     static constexpr std::size_t kFrameHeaderBytes = 4U + 2U + 32U;
     static constexpr std::uint8_t kHandshakeMessageType = 0;
     static constexpr char kBindingDomain[] = "FST TLS Binding v1";
+    static constexpr char kSessionDomain[] = "FST TLS Session v1";
 };
 
 } // namespace feinstat::network

@@ -104,7 +104,6 @@ private:
     void on_connect(std::shared_ptr<SecureSession> session,
                     const NodeId& node_id,
                     const std::string& host,
-                    std::uint16_t port,
                     std::function<void(boost::system::error_code, std::shared_ptr<PeerSession>)> callback,
                     const boost::system::error_code& ec,
                     SecureHandshakeResult result);

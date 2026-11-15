@@ -2,9 +2,11 @@
 
 #include "feinstat/common/bytes.hpp"
 #include "feinstat/crypto/crypto.hpp"
+#include "feinstat/network/node_record.hpp"
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/rand.h>
 #include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
@@ -17,8 +19,6 @@
 #include <utility>
 
 namespace feinstat::network {
-
-constexpr char SecureSession::kBindingDomain[];
 
 //------------------------------------------------------------------------------
 // SecureSessionContext
@@ -35,14 +35,10 @@ SecureSessionContext::SecureSessionContext(
       capabilities_(std::move(capabilities)),
       endpoints_(std::move(endpoints)),
       record_expiry_unix_ms_(record_expiry_unix_ms),
-      ssl_ctx_(boost::asio::ssl::context::tls) {
-    // Enforce TLS 1.3 only using OpenSSL 4.x-compatible TLS_method().
-    // Boost 1.92's context::tlsv13 maps to TLSv1_3_method(), which was
-    // removed in OpenSSL 4.x. Use TLS_method() + version disabling instead.
+      ssl_ctx_(boost::asio::ssl::context::tlsv13) {
     ssl_ctx_.set_options(boost::asio::ssl::context::no_tlsv1 |
                          boost::asio::ssl::context::no_tlsv1_1 |
                          boost::asio::ssl::context::no_tlsv1_2);
-    // Require peer certificate and verify it.
     ssl_ctx_.set_verify_mode(boost::asio::ssl::verify_peer |
                              boost::asio::ssl::context::verify_fail_if_no_peer_cert);
 }
@@ -99,18 +95,15 @@ void SecureSessionContext::generate_tls_credentials() {
     tls_public_key_ = pair.public_key;
     tls_secret_key_ = pair.secret_key;
 
-    // Create EVP_PKEY from the Ed25519 private key (OpenSSL 4.x compatible;
-    // EVP_PKEY_new_raw_key was removed, but EVP_PKEY_new_raw_private_key remains).
     EVP_PKEY* evp_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr,
                                                       tls_secret_key_.data(),
                                                       tls_secret_key_.size());
     if (!evp_key) throw std::runtime_error("failed to create EVP_PKEY from private key");
 
-    // Build a proper X.509 v3 self-signed certificate.
     X509* cert = X509_new();
     if (!cert) { EVP_PKEY_free(evp_key); throw std::runtime_error("failed to create X509"); }
 
-    X509_set_version(cert, 2); // v3
+    X509_set_version(cert, 2);
     ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
     X509_gmtime_adj(X509_get_notBefore(cert), 0);
     X509_gmtime_adj(X509_get_notAfter(cert), 365L * 24L * 60L * 60L);
@@ -128,14 +121,12 @@ void SecureSessionContext::generate_tls_credentials() {
 
     X509_set_pubkey(cert, evp_key);
 
-    // Ed25519 signatures use native EdDSA (no digest), pass nullptr.
     if (X509_sign(cert, evp_key, nullptr) <= 0) {
         X509_free(cert);
         EVP_PKEY_free(evp_key);
         throw std::runtime_error("failed to sign TLS certificate");
     }
 
-    // Serialize certificate to DER.
     int der_len = i2d_X509(cert, nullptr);
     if (der_len <= 0) {
         X509_free(cert);
@@ -149,23 +140,18 @@ void SecureSessionContext::generate_tls_credentials() {
 
     tls_cert_hash_ = crypto::sha256(tls_cert_der_);
 
-    // Load the certificate into the OpenSSL SSL context.
-    // Without this, the context has no certificate to present during TLS
-    // handshake and mutual authentication cannot work.
     if (SSL_CTX_use_certificate(ssl_ctx_.native_handle(), cert) <= 0) {
         X509_free(cert);
         EVP_PKEY_free(evp_key);
         throw std::runtime_error("failed to load TLS certificate into SSL context");
     }
 
-    // Load the private key into the OpenSSL SSL context.
     if (SSL_CTX_use_PrivateKey(ssl_ctx_.native_handle(), evp_key) <= 0) {
         X509_free(cert);
         EVP_PKEY_free(evp_key);
         throw std::runtime_error("failed to load TLS private key into SSL context");
     }
 
-    // Verify the certificate and private key match.
     if (SSL_CTX_check_private_key(ssl_ctx_.native_handle()) <= 0) {
         X509_free(cert);
         EVP_PKEY_free(evp_key);
@@ -202,7 +188,6 @@ void SecureSessionContext::load_tls_credentials(const std::string& cert_path,
     X509_free(cert);
 
     tls_cert_hash_ = crypto::sha256(tls_cert_der_);
-    tls_credentials_loaded_ = true;
 }
 
 Signature SecureSessionContext::sign_tls_binding(const KeyProvider& identity) const {
@@ -220,7 +205,6 @@ SecureSession::SecureSession(boost::asio::io_context& io,
     : io_(io), socket_(io),
       ssl_stream_(std::move(socket_), context.ssl_context()),
       context_(context), identity_(std::move(identity)) {
-    // socket_ moved into ssl_stream_; access underlying socket via next_layer().
 }
 
 SecureSession::~SecureSession() {
@@ -233,7 +217,19 @@ void SecureSession::async_accept(Handler handler,
     ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
                                 boost::asio::ssl::context::verify_fail_if_no_peer_cert);
     ssl_stream_.set_verify_callback(
-        [](bool /*preverified*/, boost::asio::ssl::verify_context&) -> bool {
+        [this](bool /*preverified*/, boost::asio::ssl::verify_context& ctx) -> bool {
+            X509* cert = X509_STORE_CTX_get_current_cert(ctx.native_handle());
+            if (cert) {
+                int der_len = i2d_X509(cert, nullptr);
+                if (der_len > 0) {
+                    Bytes der(static_cast<std::size_t>(der_len));
+                    unsigned char* ptr = der.data();
+                    der_len = i2d_X509(cert, &ptr);
+                    der.resize(static_cast<std::size_t>(der_len));
+                    live_tls_cert_hash_ = crypto::sha256(der);
+                    live_tls_cert_hash_known_ = true;
+                }
+            }
             return true;
         });
 
@@ -241,9 +237,9 @@ void SecureSession::async_accept(Handler handler,
         [this, handler = std::move(handler),
          expected_peer_node_id](const boost::system::error_code& ec) mutable {
             if (ec) { handler(ec, {}); return; }
-            do_send_handshake([this, handler = std::move(handler),
-                               expected_peer_node_id](const boost::system::error_code& ec2,
-                                                      SecureHandshakeResult result) mutable {
+do_send_handshake([this, handler = std::move(handler),
+                       expected_peer_node_id](const boost::system::error_code& ec2,
+                                              SecureHandshakeResult /*result*/) mutable {
                 if (ec2) { handler(ec2, {}); return; }
                 do_receive_handshake([this, handler = std::move(handler),
                                       expected_peer_node_id](const boost::system::error_code& ec3,
@@ -263,74 +259,58 @@ void SecureSession::async_connect(const std::string& host,
                                    std::uint16_t port,
                                    Handler handler,
                                    std::optional<NodeId> expected_peer_node_id) {
-    // Resolve host:port
-    boost::asio::ip::tcp::resolver resolver(io_);
-    boost::asio::ip::tcp::resolver::results_type endpoints =
-        resolver.resolve(host, std::to_string(port));
-    boost::asio::ip::tcp::endpoint endpoint = *endpoints.begin();
-
-    // Synchronous connect (blocks until connected or fails)
-    boost::system::error_code ec;
-    ssl_stream_.next_layer().connect(endpoint, ec);
-    if (ec) { handler(ec, {}); return; }
-
-    ssl_stream_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
-    ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
-                                boost::asio::ssl::context::verify_fail_if_no_peer_cert);
-    ssl_stream_.set_verify_callback(
-        [](bool /*preverified*/, boost::asio::ssl::verify_context&) -> bool {
-            return true;
+    auto resolver = std::make_shared<boost::asio::ip::tcp::resolver>(io_);
+    resolver->async_resolve(host, std::to_string(port),
+        [this, resolver = std::move(resolver), handler = std::move(handler),
+         expected_peer_node_id](const boost::system::error_code& ec,
+                                boost::asio::ip::tcp::resolver::results_type endpoints) mutable {
+            if (ec) { handler(ec, {}); return; }
+            boost::asio::async_connect(ssl_stream_.next_layer(), endpoints,
+                [this, handler = std::move(handler),
+                 expected_peer_node_id](const boost::system::error_code& ec2,
+                                         const boost::asio::ip::tcp::endpoint&) mutable {
+                    if (ec2) { handler(ec2, {}); return; }
+                    ssl_stream_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
+                    ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
+                                                boost::asio::ssl::context::verify_fail_if_no_peer_cert);
+                    ssl_stream_.set_verify_callback(
+                        [this](bool /*preverified*/, boost::asio::ssl::verify_context& ctx) -> bool {
+                            X509* cert = X509_STORE_CTX_get_current_cert(ctx.native_handle());
+                            if (cert) {
+                                int der_len = i2d_X509(cert, nullptr);
+                                if (der_len > 0) {
+                                    Bytes der(static_cast<std::size_t>(der_len));
+                                    unsigned char* ptr = der.data();
+                                    der_len = i2d_X509(cert, &ptr);
+                                    der.resize(static_cast<std::size_t>(der_len));
+                                    live_tls_cert_hash_ = crypto::sha256(der);
+                                    live_tls_cert_hash_known_ = true;
+                                }
+                            }
+                            return true;
+                        });
+                    ssl_stream_.async_handshake(boost::asio::ssl::stream_base::client,
+                        [this, handler = std::move(handler),
+                         expected_peer_node_id](const boost::system::error_code& ec3) mutable {
+                            if (ec3) { handler(ec3, {}); return; }
+do_send_handshake([this, handler = std::move(handler),
+                       expected_peer_node_id](const boost::system::error_code& ec4,
+                                              SecureHandshakeResult /*result*/) mutable {
+                                if (ec4) { handler(ec4, {}); return; }
+                                do_receive_handshake([this, handler = std::move(handler),
+                                                      expected_peer_node_id](const boost::system::error_code& ec5,
+                                                                             SecureHandshakeResult peer_result) mutable {
+                                    if (ec5) { handler(ec5, {}); return; }
+                                    do_verify_handshake(peer_result, expected_peer_node_id,
+                                        [handler = std::move(handler)](const boost::system::error_code& ec6,
+                                                                        SecureHandshakeResult result) {
+                                            handler(ec6, result);
+                                        });
+                                });
+                            });
+                        });
+                });
         });
-
-    // Synchronous TLS handshake
-    boost::system::error_code tls_ec;
-    ssl_stream_.handshake(boost::asio::ssl::stream_base::client, tls_ec);
-    if (tls_ec) { handler(tls_ec, {}); return; }
-
-    // Synchronous application-level handshake
-    Bytes handshake;
-    auto build_ec = build_handshake_message(context_, *identity_, handshake);
-    if (build_ec) { handler(build_ec, {}); return; }
-
-    std::uint32_t length = static_cast<std::uint32_t>(handshake.size());
-    std::vector<Byte> frame;
-    frame.push_back(static_cast<Byte>((length >> 24) & 0xff));
-    frame.push_back(static_cast<Byte>((length >> 16) & 0xff));
-    frame.push_back(static_cast<Byte>((length >> 8) & 0xff));
-    frame.push_back(static_cast<Byte>(length & 0xff));
-    frame.insert(frame.end(), handshake.begin(), handshake.end());
-
-    boost::system::error_code write_ec;
-    boost::asio::write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()), write_ec);
-    if (write_ec) { handler(write_ec, {}); return; }
-
-    // Receive peer handshake
-    std::array<Byte, 4> length_header{};
-    boost::asio::read(ssl_stream_, boost::asio::buffer(length_header), ec);
-    if (ec) { handler(ec, {}); return; }
-
-    std::size_t expected = (static_cast<std::uint32_t>(length_header[0]) << 24) |
-                           (static_cast<std::uint32_t>(length_header[1]) << 16) |
-                           (static_cast<std::uint32_t>(length_header[2]) << 8) |
-                           static_cast<std::uint32_t>(length_header[3]);
-    if (expected > kMaxMessageBytes) {
-        handler(boost::system::errc::make_error_code(boost::system::errc::message_size), {});
-        return;
-    }
-
-    std::vector<Byte> buffer(expected);
-    if (!buffer.empty()) {
-        boost::asio::read(ssl_stream_, boost::asio::buffer(buffer), ec);
-        if (ec) { handler(ec, {}); return; }
-    }
-
-    SecureHandshakeResult parsed_result;
-    auto parse_ec = parse_handshake_message(buffer, parsed_result);
-    if (parse_ec) { handler(parse_ec, {}); return; }
-
-    authenticated_ = true;
-    handshake_result_ = parsed_result;
-    handler(boost::system::error_code{}, parsed_result);
 }
 
 void SecureSession::close(boost::system::error_code& ec) noexcept {
@@ -403,9 +383,53 @@ std::size_t SecureSession::receive_message(std::uint16_t& message_type,
 }
 
 void SecureSession::do_send_handshake(Handler handler) {
-    Bytes handshake;
-    auto build_ec = build_handshake_message(context_, *identity_, handshake);
-    if (build_ec) { handler(build_ec, {}); return; }
+    SignedNodeRecord record{};
+    record.format_version = 1;
+    record.network_identifier = context_.network_identifier();
+    record.node_id = identity_->node_id();
+    record.key_algorithm = 1;
+    record.public_key = identity_->public_key();
+    record.sequence = 1;
+    record.protocol_versions = {context_.protocol_version()};
+    record.capabilities = context_.capabilities();
+    record.endpoints = context_.endpoints();
+    record.expiry_unix_ms = context_.record_expiry_unix_ms() ? context_.record_expiry_unix_ms() : 0;
+
+    ByteWriter dw;
+    dw.string(std::string(SignedNodeRecord::kSignDomain));
+    dw.blob(record.canonical_body());
+    record.signature = identity_->sign_domain(std::string(SignedNodeRecord::kSignDomain),
+                                              std::move(dw).take());
+
+    Hash session_nonce{};
+    if (RAND_bytes(session_nonce.data(), static_cast<int>(session_nonce.size())) != 1) {
+        handler(boost::system::errc::make_error_code(boost::system::errc::io_error), {});
+        return;
+    }
+
+    ByteWriter hw;
+    hw.u8(kHandshakeMessageType);
+    hw.blob(context_.network_identifier());
+    hw.string(identity_->node_id().value());
+    hw.u16(context_.protocol_version());
+    hw.blob(context_.tls_cert_der());
+    hw.fixed(context_.tls_cert_hash());
+    hw.fixed(context_.sign_tls_binding(*identity_));
+    hw.fixed(session_nonce);
+
+    ByteWriter session_sig_writer;
+    session_sig_writer.string(kSessionDomain);
+    session_sig_writer.fixed(session_nonce);
+    session_sig_writer.blob(context_.network_identifier());
+    session_sig_writer.u16(context_.protocol_version());
+    session_sig_writer.string(identity_->node_id().value());
+    session_sig_writer.fixed(context_.tls_cert_hash());
+    Bytes session_sig_msg = std::move(session_sig_writer).take();
+    hw.fixed(identity_->sign(session_sig_msg));
+
+    hw.blob(record.serialize());
+
+    Bytes handshake = std::move(hw).take();
 
     std::uint32_t length = static_cast<std::uint32_t>(handshake.size());
     std::vector<Byte> frame;
@@ -416,17 +440,24 @@ void SecureSession::do_send_handshake(Handler handler) {
     frame.insert(frame.end(), handshake.begin(), handshake.end());
 
     boost::asio::async_write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()),
-        [this, frame = std::move(frame), handler = std::move(handler)](
-            const boost::system::error_code& ec, std::size_t) mutable {
+        [this, frame = std::move(frame), handler = std::move(handler),
+         session_nonce](const boost::system::error_code& ec, std::size_t) mutable {
             if (ec) { handler(ec, {}); return; }
-            do_receive_handshake(std::move(handler));
+            do_receive_handshake([this, handler = std::move(handler),
+                                 session_nonce](const boost::system::error_code& ec2,
+                                                SecureHandshakeResult result) mutable {
+                if (ec2) { handler(ec2, {}); return; }
+                handshake_result_.session_nonce = session_nonce;
+                do_verify_handshake(result, std::nullopt,
+                                    [handler = std::move(handler)](const boost::system::error_code& ec3,
+                                                                    SecureHandshakeResult result) {
+                                        handler(ec3, result);
+                                    });
+            });
         });
 }
 
 void SecureSession::do_receive_handshake(Handler handler) {
-    // Use shared_ptr so the length header buffer outlives this stack frame;
-    // async_read holds a buffer reference that must remain valid until the
-    // read completes.
     auto length_header = std::make_shared<std::array<Byte, 4>>();
     boost::asio::async_read(ssl_stream_, boost::asio::buffer(*length_header),
         [this, handler = std::move(handler), length_header](const boost::system::error_code& ec, std::size_t) mutable {
@@ -441,7 +472,7 @@ void SecureSession::do_receive_handshake(Handler handler) {
             }
             std::vector<Byte> buffer(expected);
             boost::asio::async_read(ssl_stream_, boost::asio::buffer(buffer),
-                [this, handler = std::move(handler), buffer = std::move(buffer)](
+                [handler = std::move(handler), buffer = std::move(buffer)](
                     const boost::system::error_code& ec2, std::size_t) mutable {
                     if (ec2) { handler(ec2, {}); return; }
                     SecureHandshakeResult parsed_result;
@@ -463,6 +494,15 @@ void SecureSession::do_verify_handshake(const SecureHandshakeResult& result,
         handler(boost::system::errc::make_error_code(boost::system::errc::protocol_error), {});
         return;
     }
+    if (!live_tls_cert_hash_known_) {
+        handler(boost::system::errc::make_error_code(boost::system::errc::protocol_error), {});
+        return;
+    }
+    if (result.tls_cert_hash != live_tls_cert_hash_) {
+        handler(boost::system::errc::make_error_code(boost::system::errc::protocol_error), {});
+        return;
+    }
+
     authenticated_ = true;
     handshake_result_ = result;
     handler(boost::system::error_code{}, result);
@@ -471,6 +511,11 @@ void SecureSession::do_verify_handshake(const SecureHandshakeResult& result,
 boost::system::error_code SecureSession::build_handshake_message(const SecureSessionContext& ctx,
                                                                   const KeyProvider& identity,
                                                                   Bytes& out) {
+    Hash session_nonce{};
+    if (RAND_bytes(session_nonce.data(), static_cast<int>(session_nonce.size())) != 1) {
+        return boost::system::errc::make_error_code(boost::system::errc::io_error);
+    }
+
     SignedNodeRecord record{};
     record.format_version = 1;
     record.network_identifier = ctx.network_identifier();
@@ -493,9 +538,22 @@ boost::system::error_code SecureSession::build_handshake_message(const SecureSes
     hw.u8(kHandshakeMessageType);
     hw.blob(ctx.network_identifier());
     hw.string(identity.node_id().value());
+    hw.u16(ctx.protocol_version());
     hw.blob(ctx.tls_cert_der());
     hw.fixed(ctx.tls_cert_hash());
     hw.fixed(ctx.sign_tls_binding(identity));
+    hw.fixed(session_nonce);
+
+    ByteWriter session_sig_writer;
+    session_sig_writer.string(kSessionDomain);
+    session_sig_writer.fixed(session_nonce);
+    session_sig_writer.blob(ctx.network_identifier());
+    session_sig_writer.u16(ctx.protocol_version());
+    session_sig_writer.string(identity.node_id().value());
+    session_sig_writer.fixed(ctx.tls_cert_hash());
+    Bytes session_sig_msg = std::move(session_sig_writer).take();
+    hw.fixed(identity.sign(session_sig_msg));
+
     hw.blob(record.serialize());
 
     out = std::move(hw).take();
@@ -511,18 +569,22 @@ boost::system::error_code SecureSession::parse_handshake_message(const Bytes& da
     }
     Bytes network_id = reader.blob(32);
     std::string node_id_str = reader.string(128);
+    std::uint16_t peer_protocol_version = reader.u16();
     Bytes tls_cert = reader.blob(1024 * 1024);
     Hash tls_cert_hash = reader.fixed<32>();
     Signature binding_sig = reader.fixed<64>();
+    Hash session_nonce = reader.fixed<32>();
+    Signature session_sig = reader.fixed<64>();
     SignedNodeRecord record = SignedNodeRecord::parse(reader.blob(1024 * 1024));
 
     out.peer_node_id = NodeId::parse(node_id_str);
     out.peer_public_key = record.public_key;
     out.peer_record = record;
     out.tls_cert_hash = tls_cert_hash;
-    out.protocol_version = record.protocol_versions.empty() ? 0 : record.protocol_versions[0];
+    out.protocol_version = peer_protocol_version;
     out.capabilities = record.capabilities;
     out.endpoints = record.endpoints;
+    out.session_nonce = session_nonce;
 
     if (!out.peer_node_id.matches(out.peer_public_key)) {
         return boost::system::errc::make_error_code(boost::system::errc::protocol_error);
@@ -530,6 +592,7 @@ boost::system::error_code SecureSession::parse_handshake_message(const Bytes& da
     if (crypto::sha256(tls_cert) != tls_cert_hash) {
         return boost::system::errc::make_error_code(boost::system::errc::protocol_error);
     }
+
     ByteWriter binding_writer;
     binding_writer.string(kBindingDomain);
     binding_writer.blob(tls_cert);
@@ -537,6 +600,19 @@ boost::system::error_code SecureSession::parse_handshake_message(const Bytes& da
     if (!crypto::verify_ed25519(out.peer_public_key, binding_msg, binding_sig)) {
         return boost::system::errc::make_error_code(boost::system::errc::protocol_error);
     }
+
+    ByteWriter session_writer;
+    session_writer.string(kSessionDomain);
+    session_writer.fixed(session_nonce);
+    session_writer.blob(network_id);
+    session_writer.u16(peer_protocol_version);
+    session_writer.string(node_id_str);
+    session_writer.fixed(tls_cert_hash);
+    Bytes session_msg = std::move(session_writer).take();
+    if (!crypto::verify_ed25519(out.peer_public_key, session_msg, session_sig)) {
+        return boost::system::errc::make_error_code(boost::system::errc::protocol_error);
+    }
+
     return boost::system::error_code{};
 }
 

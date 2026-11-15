@@ -16,7 +16,6 @@ namespace feinstat::network {
 namespace {
 
 constexpr std::string_view kNodeIdPrefixV1{"fn1"};
-constexpr std::string_view kRotationDomain{"FST Node Identity Rotation v1"};
 
 } // namespace
 

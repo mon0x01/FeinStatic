@@ -90,6 +90,7 @@ FS_TEST(secure_session_handshake_rejects_wrong_tls_cert_hash) {
     (void)reader.u8();           // message type
     (void)reader.blob(32);       // network id
     (void)reader.string(128);    // node id string
+    (void)reader.u16();          // protocol version
     (void)reader.blob(1024 * 1024); // tls cert der
     // Now at cert hash position - we can't easily modify via reader,
     // so rebuild with wrong hash manually.
@@ -97,11 +98,18 @@ FS_TEST(secure_session_handshake_rejects_wrong_tls_cert_hash) {
     hw.u8(0);
     hw.blob(make_network_id());
     hw.string(identity.node_id().value());
+    hw.u16(8);
     hw.blob(ctx.tls_cert_der());
     Hash wrong_hash{};
     wrong_hash.fill(0xab);
     hw.fixed(wrong_hash);
     hw.fixed(ctx.sign_tls_binding(identity));
+    Hash session_nonce{};
+    session_nonce.fill(0xcd);
+    hw.fixed(session_nonce);
+    Signature session_sig{};
+    session_sig.fill(0xef);
+    hw.fixed(session_sig);
 
     SignedNodeRecord record{};
     record.format_version = 1;
@@ -137,6 +145,7 @@ FS_TEST(secure_session_handshake_rejects_bad_binding_signature) {
     hw.u8(0);
     hw.blob(make_network_id());
     hw.string(identity.node_id().value());
+    hw.u16(8);
     hw.blob(ctx.tls_cert_der());
     hw.fixed(ctx.tls_cert_hash());
     // Sign with the WRONG identity key.
@@ -147,6 +156,12 @@ FS_TEST(secure_session_handshake_rejects_bad_binding_signature) {
             w.blob(ctx.tls_cert_der());
             return std::move(w).take();
         }()));
+    Hash session_nonce{};
+    session_nonce.fill(0xcd);
+    hw.fixed(session_nonce);
+    Signature session_sig{};
+    session_sig.fill(0xef);
+    hw.fixed(session_sig);
 
     SignedNodeRecord record{};
     record.format_version = 1;
@@ -183,9 +198,16 @@ FS_TEST(secure_session_handshake_rejects_node_id_mismatch) {
     hw.u8(0);
     hw.blob(make_network_id());
     hw.string(other.node_id().value()); // wrong node ID
+    hw.u16(8);
     hw.blob(ctx.tls_cert_der());
     hw.fixed(ctx.tls_cert_hash());
     hw.fixed(ctx.sign_tls_binding(identity));
+    Hash session_nonce{};
+    session_nonce.fill(0xcd);
+    hw.fixed(session_nonce);
+    Signature session_sig{};
+    session_sig.fill(0xef);
+    hw.fixed(session_sig);
 
     SignedNodeRecord record{};
     record.format_version = 1;

@@ -54,7 +54,11 @@ bool StorePeerAuthenticator::is_verified(const NodeId& node_id) const noexcept {
 PeerExchange::PeerExchange(PeerStore& store, BootstrapDiscovery& bootstrap,
                             PeerAuthenticator& authenticator, Config config)
     : store_(store), bootstrap_(bootstrap), authenticator_(authenticator),
-      config_(std::move(config)) {}
+      config_(std::move(config)) {
+    // authenticator_ is stored for future use;
+    // it is intentionally not referenced in the current implementation.
+    (void)authenticator_;
+}
 
 PeerExchangeResult PeerExchange::exchange(const NodeId& peer_node_id,
                                            const std::vector<SignedNodeRecord>& send_records,

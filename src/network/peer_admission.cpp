@@ -19,7 +19,12 @@ AdmissionController::AdmissionController(
     Config config)
     : store_(store), bootstrap_(bootstrap), authenticator_(authenticator),
       exchange_(exchange), tls_context_(tls_context),
-      identity_(std::move(identity)), config_(std::move(config)) {}
+      identity_(std::move(identity)), config_(std::move(config)) {
+    // bootstrap_ and exchange_ are stored for future use;
+    // they are intentionally not referenced in the current implementation.
+    (void)bootstrap_;
+    (void)exchange_;
+}
 
 AdmissionController::~AdmissionController() {
     stop();
@@ -85,9 +90,7 @@ void AdmissionController::on_accept(std::shared_ptr<SecureSession> session,
                 session->close(close_ec);
                 return;
             }
-            std::uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            on_connect(session, result.peer_node_id, "", 0,
+            on_connect(session, result.peer_node_id, "",
                          [](const boost::system::error_code&, std::shared_ptr<PeerSession>) {},
                          handshake_ec, result);
         },
@@ -97,7 +100,6 @@ void AdmissionController::on_accept(std::shared_ptr<SecureSession> session,
 void AdmissionController::on_connect(std::shared_ptr<SecureSession> session,
                                       const NodeId& node_id,
                                       const std::string& host,
-                                      std::uint16_t port,
                                       std::function<void(boost::system::error_code, std::shared_ptr<PeerSession>)> callback,
                                       const boost::system::error_code& ec,
                                       SecureHandshakeResult result) {
@@ -110,8 +112,9 @@ void AdmissionController::on_connect(std::shared_ptr<SecureSession> session,
     // post-handshake operations. The pre-handshake node_id is only used for
     // admission-control bookkeeping before the handshake.
     const NodeId& peer_id = result.peer_node_id;
-    std::uint64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::system_clock::now().time_since_epoch()).count();
+    const std::uint64_t now = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
 
     std::lock_guard<std::mutex> lock(sessions_mutex_);
 
@@ -162,37 +165,41 @@ void AdmissionController::connect_to_peer(
     std::function<void(boost::system::error_code, std::shared_ptr<PeerSession>)> callback) {
     NodeId tracking_id = expected_peer_node_id.value_or(NodeId{});
 
-    std::lock_guard<std::mutex> lock(sessions_mutex_);
-
-    if (!can_initiate_outbound(tracking_id)) {
-        callback(boost::system::errc::make_error_code(boost::system::errc::not_a_stream), nullptr);
-        return;
-    }
-
-    auto lifecycle_it = lifecycles_.find(tracking_id);
-    if (lifecycle_it != lifecycles_.end()) {
-        auto now = std::chrono::steady_clock::now();
-        if (!lifecycle_it->second.can_attempt(now)) {
-            callback(boost::system::errc::make_error_code(boost::system::errc::timed_out), nullptr);
+    // Check admission limits under the lock, then release before async I/O.
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        if (!can_initiate_outbound(tracking_id)) {
+            callback(boost::system::errc::make_error_code(boost::system::errc::not_a_stream), nullptr);
             return;
         }
+
+        auto lifecycle_it = lifecycles_.find(tracking_id);
+        if (lifecycle_it != lifecycles_.end()) {
+            auto now = std::chrono::steady_clock::now();
+            if (!lifecycle_it->second.can_attempt(now)) {
+                callback(boost::system::errc::make_error_code(boost::system::errc::timed_out), nullptr);
+                return;
+            }
+        }
+
+        // Reserve outbound capacity.
+        ++outbound_count_;
     }
 
     auto session = std::make_shared<SecureSession>(io_, tls_context_, identity_);
-    ++outbound_count_;
-    std::cerr << "[admission] connect_to_peer: starting async_connect to " << host << ":" << port << "\n";
 
     session->async_connect(
         host, port,
         [this, session, tracking_id, host, port, callback = std::move(callback),
          expected_peer_node_id](const boost::system::error_code& ec, SecureHandshakeResult result) mutable {
+            (void)port;  // port is passed to async_connect above
             if (ec) {
                 // Decrement outbound count on failure since the connection
                 // never succeeded.
                 std::lock_guard<std::mutex> lock(sessions_mutex_);
                 --outbound_count_;
             }
-            on_connect(session, tracking_id, host, port, std::move(callback), ec, result);
+            on_connect(session, tracking_id, host, std::move(callback), ec, result);
         },
         expected_peer_node_id);
 }
@@ -216,7 +223,7 @@ void AdmissionController::reconnect_peer(
                     auto lifecycle_it = lifecycles_.find(node_id);
                     if (lifecycle_it != lifecycles_.end()) {
                         auto now = std::chrono::steady_clock::now();
-                        lifecycle_it->second.record_failure(now, 0);
+                        (void)lifecycle_it->second.record_failure(now, 0);
                     }
                 }
                 callback(ec, sess);
@@ -276,8 +283,9 @@ void AdmissionController::resolve_duplicate(const NodeId& node_id,
     boost::system::error_code ec;
     new_session->close(ec);
     store_.record_connection_attempt(node_id, true,
-        std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch()).count()));
 }
 
 void AdmissionController::remove_session_locked(const NodeId& node_id) noexcept {
