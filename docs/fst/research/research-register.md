@@ -54,6 +54,8 @@ Each research entry follows this structure:
 
 - [`README.md`](README.md) — Research-first methodology.
 - [`research-entry-template.md`](research-entry-template.md) — Entry template.
+- [`research-dependency-assessment.md`](research-dependency-assessment.md) — Research
+  dependency and priority assessment (Milestone 2E).
 - [`../adr/adr-template.md`](../adr/adr-template.md) — ADR template.
 - [`../decisions/decision-register.md`](../decisions/decision-register.md) — Decision register.
 - [`../../scope/scope-v0.1.md`](../../scope/scope-v0.1.md) — FST project scope.

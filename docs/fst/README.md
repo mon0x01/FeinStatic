@@ -22,7 +22,12 @@ docs/fst/
 ├── principles/
 │   └── engineering-principles.md  # Approved engineering principles
 ├── architecture/
-│   └── feinstat-baseline.md       # Existing FeinStatic baseline and transformation findings
+│   ├── feinstat-baseline.md       # Existing FeinStatic baseline and transformation findings
+│   ├── node-identity-peer-discovery-implementation.md  # Node identity, signed records, peer discovery (M2C)
+│   ├── secure-sessions.md         # TLS 1.3 secure session design (M2D)
+│   ├── message-dispatch.md        # Message dispatch protocol and frame format (M2D)
+│   ├── peer-admission.md          # Dynamic peer admission (M2D)
+│   └── node-roles.md              # Node role architecture (M2E)
 ├── research/
 │   ├── README.md                  # Research-first methodology overview
 │   ├── research-register.md       # Register of research entries
@@ -33,7 +38,10 @@ docs/fst/
 ├── decisions/
 │   └── decision-register.md       # Register of APPROVED / PROVISIONAL / OPEN RESEARCH decisions
 ├── security/
-│   └── security-research-register.md  # Security research register
+│   ├── security-research-register.md  # Security research register
+│   └── threat-model-v0.1.md       # Network threat model (M2E)
+├── spec/
+│   └── core-protocol-specification-v0.1.md  # Versioned core protocol specification (M2E)
 ├── roadmap/
 │   └── development-roadmap.md     # Development roadmap
 └── glossary.md                    # Glossary of terms
