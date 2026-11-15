@@ -12,9 +12,11 @@ consensus algorithm. All mechanisms described here remain open research.
 
 ## 1. Executive summary
 
-FST requires a permissionless, Byzantine-resilient consensus protocol for a globally
-distributed financial network. The existing FeinStatic implementation uses Raft, which is
-crash-fault tolerant and permissioned; it cannot be incrementally extended to meet FST's
+FST requires a permissionless consensus protocol for a globally distributed financial
+network. Whether Byzantine fault tolerance is the appropriate security model is an open
+research question under decision D-017; no consensus algorithm or BFT implementation has
+been selected. The existing FeinStatic implementation uses Raft, which is crash-fault
+tolerant and permissioned; it cannot be incrementally extended to meet FST's
 requirements (principle P9, decision D-017, decision D-024). This research surveys
 consensus theory, protocol families, validator membership, economics, network resilience,
 security, formal verification, existing implementations, and a comparative evaluation.
@@ -224,7 +226,7 @@ availability (every request receives a non-error response).
 of every request*. It does **not** mean that no useful local operation can continue during
 a partition. Bounded local offline financial transactions (pre-authorised spending limits,
 reconciled later) operate under a different model than global consensus. FST's scope
-distinguishes these modes (Section 2.13). CAP does not imply that local autonomy is
+distinguishes these modes (Section 3.13). CAP does not imply that local autonomy is
 impossible during partitions — only that global linearizability and full availability cannot
 both hold.
 
@@ -286,7 +288,10 @@ Based on FST's approved principles (P1, P2, P4, P5, P6, P7, P8, P9, P10) and sco
 - **Permissionless participation:** any independent participant may join validation without
   approval from a central authority (decision D-016).
 - **No permanent privileged operator:** no central administrator or master key (P8).
-- **Byzantine fault tolerance:** safety under explicitly bounded malicious behaviour (P9).
+- **Byzantine resilience research direction:** safety under explicitly bounded malicious
+  behaviour is an important research direction (decision D-017); P9 states that security
+  should primarily emerge from protocol design and independent verification, but does not
+  mandate Byzantine fault-tolerant consensus.
 - **Upgrade rejection:** participants may reject protocol upgrades (P5).
 - **Fork legitimacy:** no fork has exclusive legitimacy (P6, P7).
 - **Founder independence:** the network survives without its founding team (P10).
@@ -569,16 +574,15 @@ established.
 **Important correction:** The previous draft categorically classified Avalanche-style
 probabilistic safety as unsuitable for FST. This classification is **withdrawn**. The project
 owner has **not** approved deterministic finality as a universal requirement (decision D-017
-remains OPEN RESEARCH). Avalanche-family protocols present probabilistic safety under a
-bounded adversary and remain an evaluation candidate pending source verification and
-security analysis. Their suitability for FST financial settlement requires separate research.
+remains OPEN RESEARCH). Avalanche-family sources remain UNRESOLVED in RS-013; no technical
+properties (probabilistic safety, finality guarantees, or relative guarantees compared with
+deterministic BFT checkpoint finality) can be asserted without an authoritative source and
+subsequent technical inspection. Avalanche-family protocols remain a name-level research
+lead pending source verification.
 
-**FST relevance:** DAG-based designs offer throughput and latency advantages but add
-complexity. Asynchronous variants face FLP constraints on liveness under full asynchrony
-[FischerLynchPaterson1985]. Randomized protocols like Tusk circumvent FLP through
-probabilistic termination. Avalanche-style probabilistic safety does not provide the same
-deterministic safety guarantees as BFT checkpoint finality, but it is not categorically
-unsuitable — it requires protocol-specific evaluation.
+**FST relevance:** Avalanche-family protocols are recorded as an unresolved research
+candidate only. Protocol-specific evaluation requires an authoritative primary source before
+any safety, liveness, or finality claims can be made.
 
 ## 6. Validator membership and Sybil resistance
 
@@ -679,8 +683,12 @@ guarantee or failure.
 ### 6.14 Wealth concentration
 
 Token wealth may concentrate over time through rewards (rich-get-richer dynamics),
-compounding stake concentration. This is an observed tendency in some token designs,
-not a universal law.
+compounding stake concentration. [IrresbergerYang2023] studies coin concentration of
+Proof-of-Stake blockchains and does **not** find evidence of disproportionate wealth
+compounding for large stakes in the systems examined. This finding is study-specific and
+does **not** establish a universal tendency for every PoS system. Wealth concentration
+remains an economic hypothesis and design concern, not an observed universal law.
+(Economic hypothesis)
 
 ### 6.15 Validator collusion
 
@@ -755,10 +763,11 @@ economically circular for a new network [CasperFFG2017; Gasper2020]. (Economic h
 
 ### 7.6 Proof-of-work operating costs
 
-PoW security ≈ cost of hardware + energy. High operating costs are a security feature
-(wasteful by design) but create environmental and centralisation concerns [Nakamoto2008].
-(Proven result in the sense that PoW security is bounded by attack cost; centralisation
-concerns are observed deployment phenomena.)
+PoW security ≈ cost of hardware + energy. The security-is-bounded-by-attack-cost model is
+described in [Nakamoto2008]. Environmental and centralisation concerns are observed
+deployment phenomena from later analysis, not claims in the original paper.
+(Proven result — security model from [Nakamoto2008]; environmental/centralisation concerns
+are observed deployment phenomena.)
 
 ### 7.7 Slashing and punishment
 
@@ -791,12 +800,12 @@ guarantees. (Design concern)
 
 ### 7.12 Extractable value and transaction ordering
 
-MEV (Maximal Extractable Value) arises from controlling transaction ordering. It
-centralises block production and harms users. [DaianEtAl2020] documents frontrunning,
-transaction reordering, and consensus instability in decentralized exchanges on Ethereum,
-including priority gas auctions and MEV-related consensus risks. These findings are
-specific to the Ethereum context studied and should not be generalized to all blockchain
-systems without further research. (Observed deployment phenomenon — Ethereum-specific)
+MEV (Maximal Extractable Value) arises from controlling transaction ordering. [DaianEtAl2020]
+documents frontrunning, transaction reordering, and consensus instability in decentralized
+exchanges on Ethereum, including priority gas auctions and MEV-related consensus risks.
+These findings are specific to the Ethereum context studied and should not be generalized
+to all blockchain systems; the claim that MEV centralises block production is not
+universally established. (Observed deployment phenomenon — Ethereum-specific)
 
 ### 7.13 Long-term network sustainability
 
@@ -993,12 +1002,12 @@ Verification targets are protocol-specific and require implementation artifacts.
 **Examine without copying:**
 
 - **Bitcoin Core:** PoW Nakamoto-style, long deployment, extensive test network
-  [Nakamoto2008; BitcoinCore2024 — implementation reference].
+  [Nakamoto2008 — implementation reference].
 - **CometBFT (formerly Tendermint):** BFT, deterministic finality, used in Cosmos SDK
   [CometBFTConsensusSpec2024; TendermintDraft2014 — historical draft].
 - **Ethereum consensus clients:** Gasper (LMD-GHOST + Casper FFG), multiple independent
   implementations (Prysm, Lighthouse, Teku, Nimbus, Lodestar)
-  [Gasper2020; CasperFFG2017; EthereumGasper2024; EthereumWeakSubjectivity2024].
+  [Gasper2020; CasperFFG2017; EthereumWeakSubjectivity2024].
 - **Cardano:** Ouroboros family, PoS longest-chain [Ouroboros2017; OuroborosPraos2017].
 - **AlephBFT / Subspace:** DAG-based / asynchronous variants — source status UNRESOLVED.
 - **Avalanche:** Avalanche consensus family — source status UNRESOLVED; retained as
@@ -1020,11 +1029,11 @@ known limitations.
 | Agreement & ordering | View-based prepare/commit | Leader + quorum certificates | Round-based prevote/precommit | Longest-chain | Slot leader + chain selection | LMD-GHOST fork choice | Tusk async agreement |
 | Fork choice | Single chain (view changes) | Single chain (view changes) | Single chain (lock-change) | Longest chain (cumulative work) | Chain selection | LMD-GHOST | DAG-based |
 | Finality | Deterministic [PBFT] | Deterministic [HotStuff] | Deterministic [CometBFT] | Probabilistic [PoW] | Probabilistic + settlement delay [Praos] | Deterministic checkpoint finality [Gasper] | Randomized probabilistic |
-| Safety assumptions | Quorum intersection, no synchrony for safety [PBFT] | Partial synchrony, quorum intersection [HotStuff] | Partial synchrony, >2/3 voting power [CometBFT] | Honest majority hash [PoW] | Honest stake + semi-synchrony [Praos] | Byzantine stake + slashing + weak subjectivity [Gasper] | Partial synchrony / asynchrony variants |
+| Safety assumptions | Quorum intersection, no synchrony for safety [PBFT] | Partial synchrony, quorum intersection [HotStuff] | No synchrony for safety, >2/3 voting power [CometBFT] | Honest majority hash [PoW] | Honest stake + semi-synchrony [Praos] | Byzantine stake + slashing + weak subjectivity [Gasper] | Partial synchrony / asynchrony variants |
 | Liveness assumptions | Partial synchrony [PBFT] | Partial synchrony [HotStuff] | Partial synchrony, leader rotation | Honest majority hash | Honest stake, network synchrony | Honest stake, network synchrony | Randomized probabilistic termination |
 | Communication complexity | O(n²) per view [PBFT] | O(n) per view via QC [HotStuff] | PBFT-style voting [Tendermint] | O(n) block propagation | Protocol-specific [Praos] | Protocol-specific [Gasper] | Dissemination separate from consensus [Narwhal/Tusk] |
 | Decentralisation | Permissioned | Permissioned (Sybil-layer needed) | Permissioned (Sybil-layer needed) | Mining pools concentrate | Stake concentration, pools concentrate | Stake concentration, pools concentrate | Depends on Sybil layer |
-| Offline compatibility | None | None | None | None (requires global consensus) | None | None | None |
+| Offline compatibility | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) | Not provided by consensus layer; separate bounded offline-payment architecture may be composed (D-018) |
 
 *Note: Qualitative assessment only. No quantitative scores invented. Protocol-specific
 assumptions and deployment results vary. Fixed latency ranges are omitted because they
@@ -1098,8 +1107,9 @@ investigation. None is selected or approved.
 ### Candidate 6: Avalanche-family (evaluation candidate)
 
 **Retained pending source verification.** The previous categorical exclusion is withdrawn
-(see Section 5.6). Probabilistic safety under bounded adversary; suitability for FST
-financial settlement requires protocol-specific research [UNRESOLVED source].
+(see Section 5.6). Protocol-specific evaluation requires an authoritative primary source
+and subsequent technical inspection before any safety, liveness, or finality claims can be
+made.
 
 ## 14. Unsuitable approaches and reasons
 

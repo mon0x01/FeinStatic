@@ -47,7 +47,7 @@ its architectural assumptions conflict with the FST principles above:
 - **BridgeService** uses a single local vault wallet, creating centralised custody (conflicts with P1, P2, P8).
 - **Operator roles** (`PeerRole::Operator`) and the trust store confer permanent privileged authority (conflicts with P2).
 - **Pre-provisioned peer rosters** prevent permissionless validator participation (conflicts with P4, P5).
-- **Raft consensus** is crash-fault tolerant only, not Byzantine (conflicts with P9).
+- **Raft consensus** is crash-fault tolerant only; it does not address the separate BFT research direction under D-017. P9 states that security should primarily emerge from protocol design and independent verification, but does **not** mandate Byzantine fault-tolerant consensus.
 - **No upgrade/governance mechanism** exists for participants to reject changes (conflicts with P5).
 
 These conflicts are documented in [`architecture/feinstat-baseline.md`](../architecture/feinstat-baseline.md) and the

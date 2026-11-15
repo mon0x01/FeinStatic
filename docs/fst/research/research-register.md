@@ -1,7 +1,7 @@
 # FST Research Register
 
-**Status:** INITIAL — no research entries recorded yet.
-**Classification:** All entries below are placeholders pending owner-commissioned research.
+**Status:** ACTIVE — RS-013 has a dedicated research document and remains OPEN.
+**Classification:** RS-001 through RS-013 are tracked OPEN research entries.
 
 This register tracks all research that informs FST design decisions. Each entry has a
 stable identifier, status, and cross-references to related ADRs and decisions.
