@@ -179,6 +179,8 @@ void AdmissionController::connect_to_peer(
     }
 
     auto session = std::make_shared<SecureSession>(io_, tls_context_, identity_);
+    ++outbound_count_;
+    std::cerr << "[admission] connect_to_peer: starting async_connect to " << host << ":" << port << "\n";
 
     session->async_connect(
         host, port,

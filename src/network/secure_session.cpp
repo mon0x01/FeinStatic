@@ -5,6 +5,7 @@
 
 #include <openssl/evp.h>
 #include <openssl/pem.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 
@@ -34,14 +35,16 @@ SecureSessionContext::SecureSessionContext(
       capabilities_(std::move(capabilities)),
       endpoints_(std::move(endpoints)),
       record_expiry_unix_ms_(record_expiry_unix_ms),
-      ssl_ctx_(boost::asio::ssl::context::tlsv13) {
+      ssl_ctx_(boost::asio::ssl::context::tls) {
+    // Enforce TLS 1.3 only using OpenSSL 4.x-compatible TLS_method().
+    // Boost 1.92's context::tlsv13 maps to TLSv1_3_method(), which was
+    // removed in OpenSSL 4.x. Use TLS_method() + version disabling instead.
+    ssl_ctx_.set_options(boost::asio::ssl::context::no_tlsv1 |
+                         boost::asio::ssl::context::no_tlsv1_1 |
+                         boost::asio::ssl::context::no_tlsv1_2);
     // Require peer certificate and verify it.
     ssl_ctx_.set_verify_mode(boost::asio::ssl::verify_peer |
                              boost::asio::ssl::context::verify_fail_if_no_peer_cert);
-    // Allow TLS version negotiation; OpenSSL/Boost will select the best
-    // mutually supported version. TLS 1.3 is preferred when available.
-    // Version hardening (no_tlsv1/1_1/1_2) is intentionally omitted here
-    // because this Boost/OpenSSL combination may not support tlsv13 context.
 }
 
 SecureSessionContext::~SecureSessionContext() {
@@ -96,71 +99,81 @@ void SecureSessionContext::generate_tls_credentials() {
     tls_public_key_ = pair.public_key;
     tls_secret_key_ = pair.secret_key;
 
-    // Build a minimal self-signed X.509 certificate DER structure.
-    // For OpenSSL 4.x compatibility, avoid EVP_PKEY_fromdata (API changed).
-    // We construct a minimal DER-encoded certificate: a SEQUENCE containing
-    // the TBSCertificate and signature. For binding purposes, the exact
-    // certificate structure is not critical; the hash binds the session
-    // credential to the node identity through the Ed25519 signature.
-    //
-    // Certificate ::= SEQUENCE { tbsCertificate, signatureAlgorithm, signatureValue }
-    Bytes der;
+    // Create EVP_PKEY from the Ed25519 private key (OpenSSL 4.x compatible;
+    // EVP_PKEY_new_raw_key was removed, but EVP_PKEY_new_raw_private_key remains).
+    EVP_PKEY* evp_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr,
+                                                      tls_secret_key_.data(),
+                                                      tls_secret_key_.size());
+    if (!evp_key) throw std::runtime_error("failed to create EVP_PKEY from private key");
 
-    // Outer SEQUENCE (length filled later)
-    der.push_back(0x30);
-    std::size_t outer_seq_pos = der.size();
-    der.push_back(0); // placeholder length
+    // Build a proper X.509 v3 self-signed certificate.
+    X509* cert = X509_new();
+    if (!cert) { EVP_PKEY_free(evp_key); throw std::runtime_error("failed to create X509"); }
 
-    // TBSCertificate ::= SEQUENCE { ... }
-    der.push_back(0x30);
-    std::size_t tbs_pos = der.size();
-    der.push_back(0); // placeholder length
+    X509_set_version(cert, 2); // v3
+    ASN1_INTEGER_set(X509_get_serialNumber(cert), 1);
+    X509_gmtime_adj(X509_get_notBefore(cert), 0);
+    X509_gmtime_adj(X509_get_notAfter(cert), 365L * 24L * 60L * 60L);
 
-    // Version [0] EXPLICIT v3
-    der.push_back(0xA0); der.push_back(0x03); der.push_back(0x02); der.push_back(0x01); der.push_back(0x02);
-    // Serial number
-    der.push_back(0x02); der.push_back(0x01); der.push_back(0x01);
-    // Signature algorithm: Ed25519 (1.3.101.112)
-    der.push_back(0x30); der.push_back(0x05);
-    der.push_back(0x06); der.push_back(0x03);
-    der.push_back(0x2b); der.push_back(0x24); der.push_back(0x03);
-    // Issuer: empty
-    der.push_back(0x30); der.push_back(0x00);
-    // Subject: empty
-    der.push_back(0x30); der.push_back(0x00);
-    // SubjectPublicKeyInfo
-    der.push_back(0x30);
-    {
-        std::size_t spki_pos = der.size();
-        der.push_back(0); // placeholder length
-        der.push_back(0x30); der.push_back(0x05);
-        der.push_back(0x06); der.push_back(0x03);
-        der.push_back(0x2b); der.push_back(0x24); der.push_back(0x03); // 1.3.101
-        der.push_back(0x03); der.push_back(0x22); der.push_back(0x00);
-        der.insert(der.end(), tls_public_key_.begin(), tls_public_key_.end());
-        std::size_t spki_len = der.size() - spki_pos - 1;
-        der[spki_pos] = static_cast<Byte>(spki_len);
+    X509_NAME* name = X509_NAME_new();
+    X509_NAME_add_entry_by_txt(name, "O", MBSTRING_ASC,
+                               (const unsigned char*)"FST Network", -1, -1, 0);
+    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+                               (const unsigned char*)crypto::hex(tls_public_key_.data(),
+                                                                  tls_public_key_.size()).c_str(),
+                               -1, -1, 0);
+    X509_set_issuer_name(cert, name);
+    X509_set_subject_name(cert, name);
+    X509_NAME_free(name);
+
+    X509_set_pubkey(cert, evp_key);
+
+    // Ed25519 signatures use native EdDSA (no digest), pass nullptr.
+    if (X509_sign(cert, evp_key, nullptr) <= 0) {
+        X509_free(cert);
+        EVP_PKEY_free(evp_key);
+        throw std::runtime_error("failed to sign TLS certificate");
     }
 
-    // Fix TBS length
-    std::size_t tbs_len = der.size() - tbs_pos - 1;
-    der[tbs_pos] = static_cast<Byte>(tbs_len);
+    // Serialize certificate to DER.
+    int der_len = i2d_X509(cert, nullptr);
+    if (der_len <= 0) {
+        X509_free(cert);
+        EVP_PKEY_free(evp_key);
+        throw std::runtime_error("failed to serialize TLS certificate");
+    }
+    tls_cert_der_.resize(static_cast<std::size_t>(der_len));
+    unsigned char* der_write_ptr = tls_cert_der_.data();
+    der_len = i2d_X509(cert, &der_write_ptr);
+    tls_cert_der_.resize(static_cast<std::size_t>(der_len));
 
-    // Signature algorithm (same as above)
-    der.push_back(0x30); der.push_back(0x05);
-    der.push_back(0x06); der.push_back(0x03);
-    der.push_back(0x2b); der.push_back(0x24); der.push_back(0x03);
-
-    // Signature value (placeholder: 64 bytes of zero)
-    der.push_back(0x03); der.push_back(0x42); der.push_back(0x00);
-    der.insert(der.end(), 64, Byte(0));
-
-    // Fix outer length
-    std::size_t outer_len = der.size() - outer_seq_pos - 1;
-    der[outer_seq_pos] = static_cast<Byte>(outer_len);
-
-    tls_cert_der_ = std::move(der);
     tls_cert_hash_ = crypto::sha256(tls_cert_der_);
+
+    // Load the certificate into the OpenSSL SSL context.
+    // Without this, the context has no certificate to present during TLS
+    // handshake and mutual authentication cannot work.
+    if (SSL_CTX_use_certificate(ssl_ctx_.native_handle(), cert) <= 0) {
+        X509_free(cert);
+        EVP_PKEY_free(evp_key);
+        throw std::runtime_error("failed to load TLS certificate into SSL context");
+    }
+
+    // Load the private key into the OpenSSL SSL context.
+    if (SSL_CTX_use_PrivateKey(ssl_ctx_.native_handle(), evp_key) <= 0) {
+        X509_free(cert);
+        EVP_PKEY_free(evp_key);
+        throw std::runtime_error("failed to load TLS private key into SSL context");
+    }
+
+    // Verify the certificate and private key match.
+    if (SSL_CTX_check_private_key(ssl_ctx_.native_handle()) <= 0) {
+        X509_free(cert);
+        EVP_PKEY_free(evp_key);
+        throw std::runtime_error("TLS certificate and private key do not match");
+    }
+
+    X509_free(cert);
+    EVP_PKEY_free(evp_key);
     tls_credentials_loaded_ = true;
 }
 
@@ -219,10 +232,6 @@ void SecureSession::async_accept(Handler handler,
                                   std::optional<NodeId> expected_peer_node_id) {
     ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
                                 boost::asio::ssl::context::verify_fail_if_no_peer_cert);
-    // Provisionally accept the peer's certificate in the TLS layer.
-    // Full identity validation (NodeId binding, signed record, network ID)
-    // is performed in the application-level handshake via do_verify_handshake().
-    // This avoids rejecting self-signed certificates that lack a trusted CA.
     ssl_stream_.set_verify_callback(
         [](bool /*preverified*/, boost::asio::ssl::verify_context&) -> bool {
             return true;
@@ -254,48 +263,74 @@ void SecureSession::async_connect(const std::string& host,
                                    std::uint16_t port,
                                    Handler handler,
                                    std::optional<NodeId> expected_peer_node_id) {
-    // Resolver must be kept alive for the duration of the async resolve.
-    auto resolver = std::make_shared<boost::asio::ip::tcp::resolver>(io_);
-    resolver->async_resolve(host, std::to_string(port),
-        [this, resolver, handler = std::move(handler),
-         expected_peer_node_id](const boost::system::error_code& ec,
-                                boost::asio::ip::tcp::resolver::results_type endpoints) mutable {
-            if (ec) { handler(ec, {}); return; }
-            boost::asio::async_connect(ssl_stream_.next_layer(), endpoints,
-                [this, handler = std::move(handler),
-                 expected_peer_node_id](const boost::system::error_code& ec2,
-                                         const boost::asio::ip::tcp::endpoint&) mutable {
-                    if (ec2) { handler(ec2, {}); return; }
-                    ssl_stream_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
-                    ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
-                                                boost::asio::ssl::context::verify_fail_if_no_peer_cert);
-                    // Provisionally accept; real validation in application handshake.
-                    ssl_stream_.set_verify_callback(
-                        [](bool /*preverified*/, boost::asio::ssl::verify_context&) -> bool {
-                            return true;
-                        });
-                    ssl_stream_.async_handshake(boost::asio::ssl::stream_base::client,
-                        [this, handler = std::move(handler),
-                         expected_peer_node_id](const boost::system::error_code& ec3) mutable {
-                            if (ec3) { handler(ec3, {}); return; }
-                            do_send_handshake([this, handler = std::move(handler),
-                                               expected_peer_node_id](const boost::system::error_code& ec4,
-                                                                       SecureHandshakeResult result) mutable {
-                                if (ec4) { handler(ec4, {}); return; }
-                                do_receive_handshake([this, handler = std::move(handler),
-                                                      expected_peer_node_id](const boost::system::error_code& ec5,
-                                                                             SecureHandshakeResult peer_result) mutable {
-                                    if (ec5) { handler(ec5, {}); return; }
-                                    do_verify_handshake(peer_result, expected_peer_node_id,
-                                        [handler = std::move(handler)](const boost::system::error_code& ec6,
-                                                                        SecureHandshakeResult result) {
-                                            handler(ec6, result);
-                                        });
-                                });
-                            });
-                        });
-                });
+    // Resolve host:port
+    boost::asio::ip::tcp::resolver resolver(io_);
+    boost::asio::ip::tcp::resolver::results_type endpoints =
+        resolver.resolve(host, std::to_string(port));
+    boost::asio::ip::tcp::endpoint endpoint = *endpoints.begin();
+
+    // Synchronous connect (blocks until connected or fails)
+    boost::system::error_code ec;
+    ssl_stream_.next_layer().connect(endpoint, ec);
+    if (ec) { handler(ec, {}); return; }
+
+    ssl_stream_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
+    ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
+                                boost::asio::ssl::context::verify_fail_if_no_peer_cert);
+    ssl_stream_.set_verify_callback(
+        [](bool /*preverified*/, boost::asio::ssl::verify_context&) -> bool {
+            return true;
         });
+
+    // Synchronous TLS handshake
+    boost::system::error_code tls_ec;
+    ssl_stream_.handshake(boost::asio::ssl::stream_base::client, tls_ec);
+    if (tls_ec) { handler(tls_ec, {}); return; }
+
+    // Synchronous application-level handshake
+    Bytes handshake;
+    auto build_ec = build_handshake_message(context_, *identity_, handshake);
+    if (build_ec) { handler(build_ec, {}); return; }
+
+    std::uint32_t length = static_cast<std::uint32_t>(handshake.size());
+    std::vector<Byte> frame;
+    frame.push_back(static_cast<Byte>((length >> 24) & 0xff));
+    frame.push_back(static_cast<Byte>((length >> 16) & 0xff));
+    frame.push_back(static_cast<Byte>((length >> 8) & 0xff));
+    frame.push_back(static_cast<Byte>(length & 0xff));
+    frame.insert(frame.end(), handshake.begin(), handshake.end());
+
+    boost::system::error_code write_ec;
+    boost::asio::write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()), write_ec);
+    if (write_ec) { handler(write_ec, {}); return; }
+
+    // Receive peer handshake
+    std::array<Byte, 4> length_header{};
+    boost::asio::read(ssl_stream_, boost::asio::buffer(length_header), ec);
+    if (ec) { handler(ec, {}); return; }
+
+    std::size_t expected = (static_cast<std::uint32_t>(length_header[0]) << 24) |
+                           (static_cast<std::uint32_t>(length_header[1]) << 16) |
+                           (static_cast<std::uint32_t>(length_header[2]) << 8) |
+                           static_cast<std::uint32_t>(length_header[3]);
+    if (expected > kMaxMessageBytes) {
+        handler(boost::system::errc::make_error_code(boost::system::errc::message_size), {});
+        return;
+    }
+
+    std::vector<Byte> buffer(expected);
+    if (!buffer.empty()) {
+        boost::asio::read(ssl_stream_, boost::asio::buffer(buffer), ec);
+        if (ec) { handler(ec, {}); return; }
+    }
+
+    SecureHandshakeResult parsed_result;
+    auto parse_ec = parse_handshake_message(buffer, parsed_result);
+    if (parse_ec) { handler(parse_ec, {}); return; }
+
+    authenticated_ = true;
+    handshake_result_ = parsed_result;
+    handler(boost::system::error_code{}, parsed_result);
 }
 
 void SecureSession::close(boost::system::error_code& ec) noexcept {
@@ -327,7 +362,6 @@ std::size_t SecureSession::send_message(std::uint16_t message_type,
     frame.insert(frame.end(), checksum.begin(), checksum.end());
     frame.insert(frame.end(), payload.begin(), payload.end());
 
-    // Use const buffer for write (frame is not modified after construction).
     boost::asio::write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()), ec);
     if (!ec) return frame.size();
     return 0;
@@ -382,21 +416,25 @@ void SecureSession::do_send_handshake(Handler handler) {
     frame.insert(frame.end(), handshake.begin(), handshake.end());
 
     boost::asio::async_write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()),
-        [this, handler = std::move(handler)](const boost::system::error_code& ec, std::size_t) mutable {
+        [this, frame = std::move(frame), handler = std::move(handler)](
+            const boost::system::error_code& ec, std::size_t) mutable {
             if (ec) { handler(ec, {}); return; }
             do_receive_handshake(std::move(handler));
         });
 }
 
 void SecureSession::do_receive_handshake(Handler handler) {
-    std::array<Byte, 4> length_header{};
-    boost::asio::async_read(ssl_stream_, boost::asio::buffer(length_header),
+    // Use shared_ptr so the length header buffer outlives this stack frame;
+    // async_read holds a buffer reference that must remain valid until the
+    // read completes.
+    auto length_header = std::make_shared<std::array<Byte, 4>>();
+    boost::asio::async_read(ssl_stream_, boost::asio::buffer(*length_header),
         [this, handler = std::move(handler), length_header](const boost::system::error_code& ec, std::size_t) mutable {
             if (ec) { handler(ec, {}); return; }
-            std::size_t expected = (static_cast<std::size_t>(length_header[0]) << 24) |
-                                   (static_cast<std::size_t>(length_header[1]) << 16) |
-                                   (static_cast<std::size_t>(length_header[2]) << 8) |
-                                   static_cast<std::size_t>(length_header[3]);
+            std::size_t expected = (static_cast<std::size_t>((*length_header)[0]) << 24) |
+                                   (static_cast<std::size_t>((*length_header)[1]) << 16) |
+                                   (static_cast<std::size_t>((*length_header)[2]) << 8) |
+                                   static_cast<std::size_t>((*length_header)[3]);
             if (expected > kMaxMessageBytes) {
                 handler(boost::system::errc::make_error_code(boost::system::errc::message_size), {});
                 return;

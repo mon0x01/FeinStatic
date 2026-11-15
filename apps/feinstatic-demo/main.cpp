@@ -5,9 +5,9 @@
 #include "feinstat/network/bootstrap.hpp"
 #include "feinstat/network/identity.hpp"
 #include "feinstat/network/message_dispatch.hpp"
-#include "feinstat/network/network_runtime.hpp"
 #include "feinstat/network/node_record.hpp"
 #include "feinstat/network/peer_exchange.hpp"
+#include "feinstat/network/peer_identity.hpp"
 #include "feinstat/network/peer_store.hpp"
 #include "feinstat/network/secure_session.hpp"
 
@@ -20,7 +20,6 @@
 #include <optional>
 #include <string>
 #include <thread>
-#include <vector>
 
 using namespace feinstat;
 using namespace feinstat::crypto;
@@ -67,17 +66,37 @@ std::uint64_t now_ms() {
 
 } // namespace
 
+int main_impl(int argc, char** argv);
+
 int main(int argc, char** argv) {
+    try {
+        return main_impl(argc, argv);
+    } catch (const std::exception& e) {
+        std::cerr << "FATAL: " << e.what() << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << "FATAL: unknown exception\n";
+        return 1;
+    }
+}
+
+int main_impl(int argc, char** argv) {
     std::signal(SIGINT, handle_signal);
     std::signal(SIGTERM, handle_signal);
 
     if (argc < 2) {
-        std::cerr << "Usage: feinstatic-demo <node-name>\n";
+        std::cerr << "Usage: feinstatic-demo <node-name> [--reset]\n";
         std::cerr << "  Nodes: alice, bob, carol\n";
+        std::cerr << "  --reset: delete persisted identity and peer store before start\n";
         return 1;
     }
 
     std::string name = argv[1];
+    bool reset = false;
+    for (int i = 2; i < argc; ++i) {
+        if (std::string(argv[i]) == "--reset") reset = true;
+    }
+
     Bytes network_id = make_network_id();
 
     std::uint16_t port = 30400;
@@ -88,21 +107,33 @@ int main(int argc, char** argv) {
     std::string identity_path = "/tmp/fst-demo-" + name + ".identity";
     std::string store_path = "/tmp/fst-demo-" + name + ".peers.db";
 
-    std::error_code ec;
-    std::filesystem::remove(identity_path, ec);
-    std::filesystem::remove(store_path, ec);
-    std::filesystem::remove(store_path + "-wal", ec);
-    std::filesystem::remove(store_path + "-shm", ec);
+    // Only delete persistent material when --reset is explicitly requested.
+    if (reset) {
+        std::error_code ec;
+        std::filesystem::remove(identity_path, ec);
+        std::filesystem::remove(store_path, ec);
+        std::filesystem::remove(store_path + "-wal", ec);
+        std::filesystem::remove(store_path + "-shm", ec);
+    }
 
     std::cout << "=== FST Demo Node: " << name << " ===\n";
-    std::cout << "Network ID: " << crypto::hex(network_id.data(), network_id.size()) << '\n';
-    std::cout << "Listening on 127.0.0.1:" << port << '\n';
+    std::cout << "Network ID: " << crypto::hex(network_id.data(), network_id.size()) << "\n";
+    std::cout << "Listening on 127.0.0.1:" << port << "\n";
     std::cout << "Press Ctrl+C to stop.\n";
 
-    // Generate node identity (stack-local, safe for main() scope).
-    Ed25519KeyProvider provider = Ed25519KeyProvider::generate();
-    std::shared_ptr<const Ed25519KeyProvider> identity(&provider, [](const Ed25519KeyProvider*) {});
-    std::cout << "[" << name << "] Node ID: " << identity->node_id().value() << '\n';
+    // Load existing identity or generate a new one. Persistent identity is
+    // preserved across restarts unless --reset is passed.
+    std::shared_ptr<const KeyProvider> identity;
+    if (!reset && std::filesystem::exists(identity_path)) {
+        FileKeyProvider fp = FileKeyProvider::load(identity_path);
+        identity = std::make_shared<const FileKeyProvider>(std::move(fp));
+    } else {
+        NodeIdentity ni = NodeIdentity::generate();
+        ni.save_new(identity_path);
+        FileKeyProvider fp = FileKeyProvider::load(identity_path);
+        identity = std::make_shared<const FileKeyProvider>(std::move(fp));
+    }
+    std::cout << "[" << name << "] Node ID: " << identity->node_id().value() << "\n";
 
     auto tls_ctx = std::unique_ptr<SecureSessionContext>(
         new SecureSessionContext(network_id, 8, {"peer"},
@@ -138,7 +169,7 @@ int main(int argc, char** argv) {
     dispatcher->register_handler(PeerMessageType::kPing,
         [&name](std::shared_ptr<PeerSession> session, PeerMessageType, const Bytes& payload, boost::system::error_code& ec) {
             session->send_message(static_cast<std::uint16_t>(PeerMessageType::kPong), payload, ec);
-            std::cout << "[" << name << "] Ponged " << session->peer_node_id().value() << '\n';
+            std::cout << "[" << name << "] Ponged " << session->peer_node_id().value() << "\n";
         });
     dispatcher->register_handler(PeerMessageType::kPong,
         [&name](std::shared_ptr<PeerSession>, PeerMessageType, const Bytes&, boost::system::error_code& ec) {
@@ -150,7 +181,7 @@ int main(int argc, char** argv) {
             try {
                 auto record = SignedNodeRecord::parse(payload);
                 std::cout << "[" << name << "] Peer record from "
-                          << session->peer_node_id().value() << " for " << record.node_id.value() << '\n';
+                          << session->peer_node_id().value() << " for " << record.node_id.value() << "\n";
             } catch (...) {
                 std::cout << "[" << name << "] Failed to parse peer record\n";
             }
@@ -159,36 +190,34 @@ int main(int argc, char** argv) {
     dispatcher->register_handler(PeerMessageType::kDisconnect,
         [&name](std::shared_ptr<PeerSession> session, PeerMessageType, const Bytes&, boost::system::error_code& ec) {
             std::cout << "[" << name << "] Disconnect from "
-                      << session->peer_node_id().value() << '\n';
+                      << session->peer_node_id().value() << "\n";
             (void)ec;
         });
 
     admission->start_listening("127.0.0.1", port);
-    std::cout << "[" << name << "] Listening on port " << admission->listen_port() << '\n';
+    std::cout << "[" << name << "] Listening on port " << admission->listen_port() << "\n";
 
-    // Alice discovers Bob through bootstrap and connects to him (with retry).
+    // Alice discovers Bob through bootstrap and connects to him.
     if (name == "alice") {
         bootstrap->add_entry({"bootstrap-bob", "127.0.0.1:30402", {}});
+        std::cout << "[" << name << "] Attempting connection to Bob at 127.0.0.1:30402\n";
+        admission->connect_to_peer(std::nullopt, "127.0.0.1", 30402,
+            [&name, &dispatcher](const boost::system::error_code& ec, std::shared_ptr<PeerSession> session) {
+                std::cout << "[" << name << "] Connect callback: ec=" << ec.message() << "\n";
+                if (!ec) {
+                    std::cout << "[" << name << "] Connected to Bob: "
+                              << session->peer_node_id().value() << "\n";
+                    boost::system::error_code sec;
+                    dispatcher->ping(session, sec);
+                } else {
+                    std::cout << "[" << name << "] Connect to Bob failed: " << ec.message() << "\n";
+                }
+            });
+        std::cout << "[" << name << "] connect_to_peer returned\n";
     }
 
     while (!g_stop) {
         admission->tick(now_ms());
-
-        // Alice: retry connection to Bob periodically until established.
-        if (name == "alice") {
-            admission->connect_to_peer(std::nullopt, "127.0.0.1", 30402,
-                [&name, &dispatcher](const boost::system::error_code& ec, std::shared_ptr<PeerSession> session) {
-                    if (!ec) {
-                        std::cout << "[" << name << "] Connected to Bob: "
-                                  << session->peer_node_id().value() << '\n';
-                        boost::system::error_code sec;
-                        dispatcher->ping(session, sec);
-                    } else {
-                        std::cout << "[" << name << "] Retry connect to Bob: " << ec.message() << '\n';
-                    }
-                });
-        }
-
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
     }
 
