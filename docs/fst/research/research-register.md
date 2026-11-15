@@ -38,7 +38,7 @@ Each research entry follows this structure:
 | RS-010 | OPEN | Governance and on-chain upgrades | TBD | Upgrade signaling, participant veto, fork legitimacy |
 | RS-011 | OPEN | Compliance | TBD | Regulatory boundaries, jurisdictional differences, protocol vs service-provider responsibilities, fiat on/off-ramp requirements, custodian/exchange/liquidity-provider compliance, lawful services without unilateral protocol control |
 | RS-012 | OPEN | Independent client implementation count | TBD | Research one, two, or three independent client implementations before mainnet |
-| RS-013 | OPEN | Permissionless consensus and validator architecture | docs/fst/research/consensus-validator-research.md | Consensus family comparison, validator membership, Sybil resistance, validator economics, network resilience, security assumptions, formal verification, existing implementations. Source verification attempted: 11 LIKELY, 2 UNCERTAIN, 1 UNRESOLVED references; 3 inline citations not in table. External web access unavailable — references not independently verified against original publications. |
+| RS-013 | OPEN | Permissionless consensus and validator architecture | docs/fst/research/consensus-validator-research.md | Consensus family comparison, validator membership, Sybil resistance, validator economics, network resilience, security assumptions, formal verification, existing implementations. Source verification: 19 references PARTIALLY VERIFIED (metadata recorded from task description; full papers not inspected — no external web access). 3 sources removed as UNRESOLVED (AlephBFT, Avalanche-family, Chia). DiemBFT inline citation resolved to reference #10. Verification date: 2026-11-15. |
 
 ## How to add a new entry
 

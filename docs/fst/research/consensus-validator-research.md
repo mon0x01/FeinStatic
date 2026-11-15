@@ -30,33 +30,51 @@ resistance, and partition tolerance.
 ### 2.1 Distributed agreement
 
 Distributed agreement requires a set of participants to reach a common decision despite
-failures. The fundamental impossibility result is the FLP impossibility: in an asynchronous
-system, no deterministic consensus protocol can guarantee both safety and liveness with even
-one crash failure [FischerLynchPaterson1985]. This means FST must make assumptions about
-timing (partial synchrony or synchrony) or use randomisation to achieve liveness.
+failures. The fundamental impossibility result is the **FLP impossibility** [FischerLynchPaterson1985]:
+in a fully asynchronous message-passing system, no deterministic consensus protocol can
+guarantee termination (liveness) with even one crash failure, while also preserving safety.
+
+**Precise scope of FLP:** The impossibility applies to *deterministic* termination under
+*fully asynchronous* timing with *crash* failures. It does **not** imply that randomized
+asynchronous consensus is impossible, nor that consensus is impossible under partial
+synchrony. FST must therefore rely on one of: (a) timing assumptions (partial synchrony or
+synchrony) for liveness, (b) randomization for probabilistic termination under asynchrony,
+or (c) accepting that liveness may be temporarily suspended during extended asynchrony.
 
 ### 2.2 Byzantine fault tolerance
 
 Byzantine fault tolerance extends crash-fault tolerance to arbitrary (malicious) behaviour.
-The classical result is that Byzantine agreement requires at least 3f+1 participants to
-tolerate f Byzantine faults [LamportShostakPease1982], [CastroLiskov1999]. In a
-permissionless setting with unknown participant count, this bound cannot be applied directly;
-Sybil resistance must be layered on top.
+
+**The 3f+1 bound:** Classical Byzantine agreement (e.g., PBFT [CastroLiskov1999]) requires
+at least 3f+1 participants to tolerate f Byzantine faults, with quorums of 2f+1 [LamportShostakPease1982].
+This bound assumes a **known, fixed participant set** and a specific communication/synchrony
+model. It is **not** universal: Nakamoto-style Proof of Work uses an honest-majority-of-hash-rate
+assumption (<50% adversarial hash rate), and Proof of Stake uses an honest-majority-of-stake
+assumption. In a permissionless setting with unknown participant count, the 3f+1 bound cannot
+be applied directly; Sybil resistance must be layered on top, which changes the effective
+quorum model.
+
+**Quorum intersection:** BFT safety is achieved through quorum intersection — any two quorums
+share at least one honest participant [LamportShostakPease1982]. If two conflicting decisions
+were made, the shared honest participant would have voted for both, violating its protocol
+rules. This mechanism depends on the quorum construction and fault model of each protocol.
 
 ### 2.3 Sybil attacks and open membership
 
 A Sybil attack creates many identities to gain disproportionate influence [Douceur2002].
 In a permissionless network, identity is cheap to create, so some costly or scarce resource
 (Proof of Work, stake, reputation, or social graph) must gate participation. Without Sybil
-resistance, quorum intersection and Byzantine thresholds are meaningless.
+resistance, quorum intersection and Byzantine thresholds are meaningless because an adversary
+can create unlimited identities to exceed any threshold.
 
 ### 2.4 Safety and liveness
 
 Safety: nothing bad happens (e.g., two conflicting blocks are never both finalised).
 Liveness: something good eventually happens (e.g., new blocks are finalised).
-FLP implies that under asynchrony, safety and liveness cannot both be guaranteed
-deterministically. BFT protocols typically guarantee safety unconditionally and liveness
-under partial synchrony.
+FLP implies that under full asynchrony, deterministic safety and liveness cannot both be
+guaranteed [FischerLynchPaterson1985]. BFT protocols typically guarantee safety
+unconditionally (under their fault bound) and liveness under partial synchrony
+[DworkLynchStockmeyer1988].
 
 ### 2.5 Partial synchrony and synchrony assumptions
 
@@ -65,12 +83,20 @@ delay and processing time, but protocols cannot rely on it for safety. Most BFT 
 assume partial synchrony for liveness. Pure synchrony assumes known bounds; pure asynchrony
 assumes none.
 
-### 2.6 Network partitions
+### 2.6 Network partitions and CAP
 
-A partition splits the validator set into disconnected groups. By the CAP theorem
-[Brewer2000], a system cannot simultaneously guarantee consistency and availability during
-a partition. BFT protocols typically preserve safety during partitions and sacrifice
-liveness until a quorum reconnects.
+A partition splits the validator set into disconnected groups. The CAP theorem
+[GilbertLynch2002] formally proves Brewer's conjecture: in an asynchronous network subject
+to partitions, a system cannot simultaneously guarantee consistency (linearizability) and
+availability (every request receives a non-error response).
+
+**Important qualification:** CAP concerns *global linearizable decisions* and *availability
+of every request*. It does **not** mean that no useful local operation can continue during
+a partition. Bounded local offline financial transactions (pre-authorised spending limits,
+reconciled later) operate under a different model than global consensus. FST's scope
+distinguishes these modes (Section 2.13). CAP does not imply that local autonomy is
+impossible during partitions — only that global linearizability and full availability
+cannot both hold.
 
 ### 2.7 Message delays, loss and reordering
 
@@ -83,35 +109,32 @@ liveness under synchrony assumptions.
 Byzantine participants may deviate arbitrarily from the protocol, including colluding,
 equivocating (sending conflicting messages to different peers), and withholding messages.
 Collusion among f Byzantine validators can prevent liveness (by withholding votes) or
-attempt safety violations (by equivocating), subject to the 3f+1 bound.
+attempt safety violations (by equivocating), subject to the protocol's fault bound
+(e.g., 3f+1 for classical BFT, honest-majority assumptions for Nakamoto/PoS).
 
-### 2.9 Quorum intersection
-
-Quorum intersection ensures any two quorums share at least one honest participant. This is
-the mechanism by which BFT safety is achieved: if two conflicting decisions were made, the
-shared honest participant would have voted for both, violating its own protocol rules.
-
-### 2.10 Forks and conflicting histories
+### 2.9 Forks and conflicting histories
 
 A fork occurs when the network diverges into multiple chains. Deterministic finality
 prevents forks after finalisation; probabilistic finality (Nakamoto-style) makes forks
-increasingly unlikely but never impossible. FST's fork-protection requirements (decision
-D-036) require unique network identities, replay protection, and distinct currency
+increasingly unlikely with depth but never impossible. FST's fork-protection requirements
+(decision D-036) require unique network identities, replay protection, and distinct currency
 identifiers for any independent fork.
 
-### 2.11 Deterministic and probabilistic finality
+### 2.10 Deterministic and probabilistic finality
 
-Deterministic finality: once a block is finalised, it cannot be reverted (BFT protocols).
-Probabilistic finality: reversion becomes exponentially unlikely with depth but is never
-impossible (Nakamoto-style). FST's finality model is unresolved (decision D-017).
+Deterministic finality: once a block is finalised, it cannot be reverted (classical BFT and
+BFT-style protocols with checkpoint finality). Probabilistic finality: reversion becomes
+exponentially unlikely with confirmation depth but is never impossible (Nakamoto-style).
+FST's finality model is unresolved (decision D-017). The project owner has **not** approved
+deterministic finality as a universal requirement; both models remain evaluation candidates.
 
-### 2.12 Consensus recovery after network disruption
+### 2.11 Consensus recovery after network disruption
 
 After a partition or disruption, the protocol must recover liveness when a quorum of honest
 validators reconnects. Recovery mechanisms include view changes, leader rotation, state
 synchronisation, and checkpointing.
 
-### 2.13 Four distinct operation modes
+### 2.12 Four distinct operation modes
 
 FST's scope distinguishes four modes that must not be conflated:
 
@@ -123,7 +146,8 @@ FST's scope distinguishes four modes that must not be conflated:
    global chain.
 
 Local offline continuity is **not** equivalent to global consensus (scope-v0.1.md,
-Offline financial operation).
+Offline financial operation). CAP and FLP constraints on global consensus do not
+automatically preclude bounded local operation during disconnection.
 
 ## 3. Permissionless consensus requirements
 
@@ -148,15 +172,18 @@ finality model remain open research (scope-v0.1.md, Decentralisation).
 
 ### 4.1 Classical Byzantine fault-tolerant protocols
 
-**Examples:** PBFT [CastroLiskov1999], Paxos variants (crash-fault only).
+**Examples:** PBFT [CastroLiskov1999]. Paxos variants are crash-fault tolerant only
+[Lamport2001] and are not Byzantine.
 
 **Membership assumptions:** fixed, known validator set; permissioned.
 
-**Message complexity:** O(n²) per view for PBFT (all-to-all communication).
+**Message complexity:** O(n²) per view for PBFT (all-to-all voting communication), where n
+is the number of replicas [CastroLiskov1999].
 
-**Quorum rules:** 2f+1 of 3f+1 for prepare and commit.
+**Quorum rules:** 2f+1 of 3f+1 for prepare and commit phases [CastroLiskov1999].
 
-**Resilience:** tolerates f Byzantine of 3f+1 total.
+**Resilience:** tolerates f Byzantine of 3f+1 total, under partial synchrony for liveness
+and synchronous communication for safety [CastroLiskov1999].
 
 **Scalability limitations:** quadratic message complexity limits validator count; fixed
 membership prevents permissionless entry.
@@ -165,35 +192,62 @@ membership prevents permissionless entry.
 permissioned membership. Adapting it to permissionless entry requires a Sybil-resistance
 layer on top (stake or work), which changes the quorum model.
 
-### 4.2 Proof-of-stake-based BFT protocols
+### 4.2 Leader-based BFT protocols
 
-**Examples:** Tendermint / CometBFT [Buchman2016], HotStuff [YinMalkhiReiterEtAl2019].
-DiemBFT is a HotStuff-based protocol with epoch changes and reconfiguration [DiemBFTWhitepaper2020 —
-reference not in table; requires independent verification].
+#### Tendermint / CometBFT
 
-**Tendermint / CometBFT:**
-- Leader-based BFT with round-robin proposers.
-- O(n²) communication per block (voting).
-- Deterministic finality.
-- Fixed validator set with stake-weighted voting in practice.
-- Block time ~1 second.
+Two distinct sources must be distinguished:
 
-**HotStuff:**
-- O(n) communication per view (linear, via quorum certificates).
-- Deterministic finality.
-- Pipelined consensus (HotStuff / Jolting / Chained-HotStuff).
-- View-change complexity O(n²) worst case.
+- **Original Tendermint draft:** Jae Kwon, 2014, outdated draft v0.6
+  [TendermintDraft2014]. This is a historical draft, not the current specification.
+- **Current CometBFT consensus specification:** maintained by the CometBFT project
+  [CometBFTConsensusSpec2024]. CometBFT is a fork of Tendermint Core; the specification
+  represents the current implementation, not the 2014 draft.
 
-**DiemBFT:**
-- HotStuff-based, with epoch changes and reconfiguration.
-- Deterministic finality.
+**Protocol characteristics:** Leader-based BFT with round-robin proposers, deterministic
+finality, O(n²) voting communication per block under the standard Tendermint/CometBFT
+design [CastroLiskov1999; TendermintDraft2014; CometBFTConsensusSpec2024]. Fixed validator
+set with stake-weighted voting in practice. Block time approximately 1 second in deployed
+networks (implementation behaviour, not a paper result).
 
 **Sybil resistance:** none intrinsic; requires external stake/token mechanism.
 
-**FST relevance:** leader-based BFT offers deterministic finality and reasonable latency
-but has quadratic (Tendermint) or linear-with-view-change-quadratic (HotStuff)
-communication. Permissionless entry requires staking, which introduces economic centralisation
-risks.
+**Verification note:** The O(n²) claim reflects the published PBFT-style voting design; the
+exact constants and implementation behaviour of CometBFT require inspection of the current
+specification [CometBFTConsensusSpec2024].
+
+#### HotStuff
+
+**Source:** "HotStuff: BFT Consensus with Linearity and Responsiveness" by Yin, Malkhi,
+Reiter, et al., PODC 2019 [HotStuff2019].
+
+**Protocol characteristics:** O(n) communication per view via quorum certificates (linear
+in the number of replicas per view, counting messages/signatures communicated) [HotStuff2019].
+Deterministic finality. Pipelined consensus variants (HotStuff, Jolting, Chained-HotStuff)
+build on the base protocol.
+
+**View-change claim qualification:** The original HotStuff paper presents linear
+communication per view. View-change complexity claims (including any O(n²) statement) must
+be verified against the paper and its pipelined variants before being stated as fact.
+This document does **not** assert an O(n²) view-change complexity for HotStuff without
+direct source inspection.
+
+**Sybil resistance:** none intrinsic; requires external stake/token mechanism.
+
+**FST relevance:** Leader-based BFT offers deterministic finality and linear per-view
+communication (HotStuff). Permissionless entry requires staking, which introduces economic
+centralisation risks. Tendermint/CometBFT requires further source inspection of the current
+specification before its communication complexity can be stated precisely for FST
+evaluation.
+
+#### DiemBFT
+
+**Source:** Diem State Machine Replication / DiemBFT technical paper
+[DiemBFT2020]. DiemBFT is HotStuff-based with epoch changes and reconfiguration
+[DiemBFT2020]. Deterministic finality.
+
+**Verification note:** This reference has been added to the bibliography table (#10) and
+can now support the inline citation previously marked unresolved.
 
 ### 4.3 Nakamoto-style consensus
 
@@ -201,64 +255,91 @@ risks.
 
 **Mechanism:** Proof of Work, longest-chain rule, cumulative work.
 
-**Finality:** probabilistic; k-block confirmation depth.
+**Finality:** probabilistic; k-block confirmation depth. Reversion becomes exponentially
+unlikely with depth but is never impossible [Nakamoto2008].
 
-**Sybil resistance:** Proof of Work (hash rate cost).
+**Sybil resistance:** Proof of Work (hash rate cost) [Nakamoto2008].
 
-**Resilience:** tolerates <50% hash rate controlled by adversary (honest majority
-assumption).
+**Resilience:** tolerates an adversary controlling <50% of the hash rate (honest-majority
+of hash rate assumption) [Nakamoto2008]. This threshold is specific to the PoW model and
+does not transfer to BFT or PoS protocols.
 
 **Scalability:** limited by block size and block interval; orphan rate increases with
-network propagation delay.
+network propagation delay. These are protocol-design considerations; measured deployment
+results vary.
 
 **FST relevance:** Nakamoto-style consensus is genuinely permissionless and has a long
-deployment track record. However, probabilistic finality, high energy cost, mining
-centralisation risk, and slow finality (minutes to hours) are significant drawbacks for a
-financial network.
+deployment track record (Bitcoin). However, probabilistic finality, high energy cost, mining
+centralisation risk, and slow settlement (minutes to hours) are significant considerations
+for a financial network.
 
 ### 4.4 Proof-of-stake longest-chain protocols
 
-**Examples:** Ouroboros (Cardano) [KiayiasRussellEtAl2017], Ethereum Gasper
-[ButerinGriffith2019], [CasperFFG2019].
+**Examples:** Ouroboros (CRYPTO 2017) [Ouroboros2017], Ouroboros Praos (IACR ePrint 2017)
+[OuroborosPraos2017], Ethereum Gasper [Gasper2020], Casper FFG [CasperFFG2017].
 
 **Mechanism:** stake-weighted block proposal and chain selection.
 
-**Finality:** Ouroboros Praos provides probabilistic finality with settlement delay;
-Gasper combines LMD-GHOST fork-choice with Casper FFG finality gadget (deterministic
-finality on checkpoints).
+**Finality — important distinction:** Ouroboros Praos provides probabilistic finality with
+settlement delay [OuroborosPraos2017]. Gasper combines the LMD-GHOST fork-choice rule with
+the Casper FFG finality gadget, providing deterministic finality on checkpoints subject to
+Byzantine-stake and slashing assumptions [Gasper2020; CasperFFG2017]. Fork choice and
+checkpoint finality are distinct mechanisms; finality is **not** unconditional
+irreversibility — it is qualified by the protocol's Byzantine-stake threshold, slashing
+conditions, and weak subjectivity assumptions [CasperFFG2017; EthereumWeakSubjectivity2024].
 
-**Sybil resistance:** stake (token ownership).
+**Sybil resistance:** stake (token ownership). The honest-stake threshold is **not**
+universal across Ouroboros, Praos, and Gasper; each protocol has distinct safety, liveness,
+and economic assumptions [Ouroboros2017; OuroborosPraos2017; Gasper2020].
 
-**Resilience:** honest stake majority assumptions; nothing-at-stake and long-range attacks
-are known concerns.
+**Resilience:** honest-stake-majority assumptions; nothing-at-stake and long-range attacks
+are known concerns [OuroborosPraos2017; CasperFFG2017; EthereumWeakSubjectivity2024].
+Defences include checkpoints, weak subjectivity, and finality gadgets [EthereumWeakSubjectivity2024].
 
-**FST relevance:** staking-based protocols align with FST's native asset but introduce
+**FST relevance:** Staking-based protocols align with FST's native asset but introduce
 wealth-concentration and centralisation risks. Economic security depends on token value,
-which is circular for a new network.
+which is circular for a new network. The honest-stake threshold must be evaluated
+protocol-by-protocol, not generalized.
 
 ### 4.5 DAG-based and asynchronous consensus
 
-**Examples:** Narwhal and Tusk [DanezisNissenbaumEtAl2022], AlephBFT
-[Petermann2020 — reference not in table; requires independent verification], Avalanche-family
-[AvaWhitepaper2019 — reference not in table; requires independent verification].
+#### Narwhal and Tusk
 
-**Narwhal and Tusk:**
-- Separates mempool (DAG of transactions) from consensus (Tusk).
-- Linear communication per transaction.
-- High throughput under good network conditions.
+**Source:** "Narwhal and Tusk: a DAG-based Mempool and Async BFT Consensus" — EuroSys 2022
+[NarwhalTusk2022]. Separates mempool (DAG of transactions) from consensus (Tusk). Linear
+communication per transaction in the DAG layer. High throughput under good network
+conditions.
 
-**AlephBFT:**
-- DAG-based, asynchronous BFT.
-- Committee-based, dynamic membership.
+**Verification status:** PARTIALLY VERIFIED — DOI and venue recorded from source list;
+paper claims not independently inspected in this session.
 
-**Avalanche-family:**
-- Probabilistic finality via repeated sub-sampled voting.
-- High throughput, low latency under synchrony.
-- Security model differs from BFT (probabilistic safety under bounded adversary).
+#### AlephBFT
+
+**Source status:** UNRESOLVED. No authoritative source record was provided that permits
+confirmation of title, authors, date, venue, or specific protocol claims. The citation
+[Petermann2020] from the previous draft is **removed** because its source could not be
+established. AlephBFT is mentioned only as a protocol family name without factual claims
+pending source verification.
+
+#### Avalanche-family
+
+**Source status:** UNRESOLVED. No authoritative source record was provided that permits
+confirmation of title, authors, date, venue, or specific protocol claims. The citation
+[AvaWhitepaper2019] from the previous draft is **removed** because its source could not be
+established.
+
+**Important correction:** The previous draft categorically classified Avalanche-style
+probabilistic safety as unsuitable for FST. This classification is **withdrawn**. The project
+owner has **not** approved deterministic finality as a universal requirement (decision D-017
+remains OPEN RESEARCH). Avalanche-family protocols present probabilistic safety under a
+bounded adversary and remain an evaluation candidate pending source verification and
+security analysis. Their suitability for FST financial settlement requires separate research.
 
 **FST relevance:** DAG-based designs offer throughput and latency advantages but add
-complexity. Asynchronous variants sacrifice liveness guarantees under asynchrony (FLP).
-Avalanche-style probabilistic safety does not match BFT's deterministic safety guarantees.
+complexity. Asynchronous variants face FLP constraints on liveness under full asynchrony
+[FischerLynchPaterson1985]. Avalanche-style probabilistic safety does not provide the same
+deterministic safety guarantees as BFT checkpoint finality, but it is not categorically
+unsuitable — it requires protocol-specific evaluation.
 
 ## 5. Validator membership and Sybil resistance
 
@@ -266,17 +347,18 @@ Avalanche-style probabilistic safety does not match BFT's deterministic safety g
 
 Permissionless validators need cryptographic identities (public keys). Identity creation
 must be cheap to encourage participation but expensive enough to prevent Sybil attacks
-when combined with a Sybil-resistance resource.
+when combined with a Sybil-resistance resource [Douceur2002].
 
 ### 5.2 Sybil resistance
 
 Without Sybil resistance, an adversary can create unlimited identities and exceed any
-Byzantine threshold. Mechanisms:
+Byzantine threshold [Douceur2002]. Mechanisms:
 
 - **Proof of Work:** computational cost per identity/block [Nakamoto2008].
-- **Proof of Stake:** token lockup as economic cost [KiayiasRussellEtAl2017].
-- **Proof of Space/Time:** storage cost [ChiaProofOfSpaceAndTime — reference not in table;
-  marked UNRESOLVED; requires independent verification].
+- **Proof of Stake:** token lockup as economic cost [Ouroboros2017; OuroborosPraos2017;
+  Gasper2020]. Each PoS protocol has distinct economic assumptions; no universal threshold.
+- **Proof of Space/Time:** storage cost [ChiaProofOfSpaceAndTime — UNRESOLVED; source not
+  confirmed; removed from factual claims pending verification].
 - **Social graph / reputation:** not well-established for open financial networks.
 
 Each mechanism has distinct centralisation and entry-barrier characteristics.
@@ -290,80 +372,92 @@ Selection determines who proposes and votes. Options:
 - Hash-rate weighted (PoW).
 
 Random sampling with stake weighting reduces centralisation but requires a source of
-randomness (verifiable random functions, beacon chains).
+randomness (verifiable random functions, beacon chains). The specific randomness mechanism
+and its security assumptions require separate research.
 
 ### 5.4 Stake-based participation
 
 Validators lock tokens as collateral. Misbehaviour can be slashed. Stake concentration
-leads to centralisation; delegation to pools amplifies this.
+leads to centralisation; delegation to pools amplifies this. Slashing conditions and
+detection windows vary by protocol [CasperFFG2017; Gasper2020].
 
 ### 5.5 Mining-based participation
 
 Miners invest in hardware and energy. Pool centralisation is a known issue in PoW
-networks.
+networks. This is an observed deployment characteristic, not a protocol guarantee.
 
 ### 5.6 Delegation and staking pools
 
 Delegation lowers entry barriers but concentrates power in pool operators. This is a
-known centralisation vector in PoS networks.
+known centralisation vector in PoS networks. The degree of concentration depends on
+protocol design and economic parameters.
 
 ### 5.7 Validator entry and exit
 
 Permissionless entry requires on-chain registration or implicit entry (e.g., mining).
 Exit requires unbonding periods to prevent stake withdrawal before slashing can be
 applied. Long unbonding periods reduce capital efficiency; short periods weaken security.
+These are design trade-offs, not protocol-mandated values.
 
 ### 5.8 Bonding and unbonding
 
 Bonding locks stake for validation. Unbonding releases it after a delay. The delay must
-exceed the slashing detection window.
+exceed the slashing detection window [CasperFFG2017; Gasper2020]. Exact values are
+protocol-specific.
 
 ### 5.9 Slashing
 
 Slashing penalises misbehaviour (double-signing, offline time). It requires evidence
-collection and a slashing mechanism. Slashing introduces centralisation risk if a small
-group decides what counts as misbehaviour.
+collection and a slashing mechanism [CasperFFG2017; Gasper2020]. Slashing introduces
+centralisation risk if a small group decides what counts as misbehaviour; this is a
+governance design question, not a protocol certainty.
 
 ### 5.10 Validator rotation
 
 Rotating validators limits the window in which a corrupted validator set can cause harm.
-Rotation must be frequent enough for security but infrequent enough for stability.
+Rotation must be frequent enough for security but infrequent enough for stability. These
+are design trade-offs.
 
 ### 5.11 Long-range attacks
 
 In PoS, an adversary who previously controlled stake can rewrite history from an old
 checkpoint ("long-range attack"). Defences include checkpoints, weak subjectivity, and
-finality gadgets [Buterin2016].
+finality gadgets [EthereumWeakSubjectivity2024; CasperFFG2017].
 
 ### 5.12 Nothing-at-stake attacks
 
-In PoS, validators can vote on multiple chains at no cost (unlike PoW, where mining on
-multiple chains splits hash rate). Finality gadgets and slashing address this.
+In PoS, validators can vote on multiple chains at no direct cost (unlike PoW, where mining
+on multiple chains splits hash rate). Finality gadgets and slashing address this
+[CasperFFG2017; Gasper2020]. This is a protocol-design consideration, not a universal
+PoS vulnerability — some designs mitigate it natively.
 
 ### 5.13 Stake concentration
 
 A small number of large stakeholders can dominate validation, reducing decentralisation
-and increasing collusion risk.
+and increasing collusion risk. This is an economic centralisation risk, not a protocol
+guarantee or failure.
 
 ### 5.14 Wealth concentration
 
-Token wealth concentrates over time through rewards (rich-get-richer), compounding stake
-concentration.
+Token wealth may concentrate over time through rewards (rich-get-richer dynamics),
+compounding stake concentration. This is an observed tendency in some token designs,
+not a universal law.
 
 ### 5.15 Validator collusion
 
 Validators may collude to censor transactions, reorg history, or extract value. Collusion
-resistance requires economic cost and geographic/infrastructure diversity.
+resistance requires economic cost and geographic/infrastructure diversity. This is a
+threat-model consideration, not a protocol-measured property.
 
 ### 5.16 Governance capture
 
-If governance is stake-weighted, wealthy stakeholders control protocol upgrades, potentially
-capturing the network.
+If governance is stake-weighted, wealthy stakeholders may control protocol upgrades,
+potentially capturing the network. This is a governance-design risk.
 
 ### 5.17 Geographic and infrastructure concentration
 
 Validators concentrated in few jurisdictions or cloud providers create single points of
-control and failure.
+control and failure. This is an operational centralisation risk.
 
 ### 5.18 Participation role distinctions
 
@@ -380,72 +474,82 @@ FST must distinguish:
 
 A public blockchain does not automatically have genuinely decentralised validation.
 Actual participation barriers (hardware, bandwidth, stake amount) determine real
-decentralisation.
+decentralisation. This is an empirical question requiring deployment data.
 
 ## 6. Validator economics
 
 ### 6.1 Initial token allocation
 
 Initial distribution affects early centralisation. Fair launch, pre-mine, and ICO models
-have different concentration profiles.
+have different concentration profiles. These are design choices with observed but not
+universally quantified effects.
 
 ### 6.2 Validator rewards
 
 Rewards incentivise participation but increase inflation. Reward design affects
-centralisation (e.g., economies of scale favour large validators).
+centralisation (e.g., economies of scale may favour large validators). This is a
+design trade-off, not a protocol guarantee.
 
 ### 6.3 Transaction fees
 
 Fees pay for block space and can prioritise transactions. Fee markets may centralise
-block production (MEV).
+block production through MEV. This is an observed deployment phenomenon.
 
 ### 6.4 Inflation and issuance incentives
 
 Inflation funds security but dilutes holders. The relationship between token value and
-security is circular for a new network.
+security is circular for a new network: security budget depends on token value, and token
+value may depend on perceived security.
 
 ### 6.5 Proof-of-stake economic security
 
-Economic security = cost to attack = value of stake at stake. Requires token value to be
-high enough to make attacks uneconomic.
+Economic security = cost to attack ≈ value of stake at stake. Requires token value to be
+high enough to make attacks uneconomic. This relationship is protocol-specific and
+economically circular for a new network [CasperFFG2017; Gasper2020].
 
 ### 6.6 Proof-of-work operating costs
 
-PoW security = cost of hardware + energy. High operating costs are a security feature
-(wasteful by design) but create environmental and centralisation concerns.
+PoW security ≈ cost of hardware + energy. High operating costs are a security feature
+(wasteful by design) but create environmental and centralisation concerns [Nakamoto2008].
 
 ### 6.7 Slashing and punishment
 
-Slashing deters misbehaviour but requires accurate detection and fair application.
+Slashing deters misbehaviour but requires accurate detection and fair application
+[CasperFFG2017; Gasper2020]. Inaccurate or politically motivated slashing is a governance
+risk.
 
 ### 6.8 Delegation and pooled validation
 
-Pools reduce entry barriers but concentrate voting power.
+Pools reduce entry barriers but concentrate voting power. The degree of concentration
+depends on pool design and delegation mechanics.
 
 ### 6.9 Validator profitability
 
 Profitability determines participation. Low profitability drives validators out, reducing
-security.
+security. This is an economic feedback loop, not a protocol guarantee.
 
 ### 6.10 Attack costs
 
-The economic cost of attacking the network must exceed the potential gain. This depends
-on total stake/hash rate and token value.
+The economic cost of attacking the network must exceed the potential gain. This depends on
+total stake/hash rate and token value. Quantifying this requires protocol-specific economic
+modeling.
 
 ### 6.11 Censorship incentives
 
 Validators may censor transactions for profit or coercion. Mempool privacy and
-proposer-separator designs address this.
+proposer-separator designs address this. These are design mitigations, not protocol
+guarantees.
 
 ### 6.12 Extractable value and transaction ordering
 
 MEV (Maximal Extractable Value) arises from controlling transaction ordering. It
-centralises block production and harms users.
+centralises block production and harms users. This is an observed deployment phenomenon
+in Ethereum and similar systems.
 
 ### 6.13 Long-term network sustainability
 
 Security budget must remain adequate as rewards decrease (if issuance is capped). Fee
-markets must sustain validator income.
+markets must sustain validator income. This is a long-run economic question.
 
 ### 6.14 Monetary-consensus interdependence
 
@@ -462,33 +566,45 @@ presuppose a monetary policy.
 
 ### 7.1 Consensus message complexity
 
-PBFT/Tendermint: O(n²) per block. HotStuff: O(n) per view, O(n²) per view change.
-Nakamoto: O(n) block propagation.
+PBFT: O(n²) per view [CastroLiskov1999]. HotStuff: O(n) communication per view via quorum
+certificates [HotStuff2019]. Nakamoto: O(n) block propagation [Nakamoto2008]. Tendermint/
+CometBFT: O(n²) voting communication per block under the standard design
+[TendermintDraft2014; CometBFTConsensusSpec2024] (exact constants require current spec
+inspection). Narwhal/Tusk: linear per transaction in the DAG layer [NarwhalTusk2022] (paper
+result, deployment-dependent).
+
+**Qualification:** These are protocol-paper results or design characteristics. Measured
+deployment throughput, latency, and bandwidth vary by implementation, network conditions,
+and validator count. No quantitative scores are claimed.
 
 ### 7.2 Bandwidth requirements
 
 BFT protocols require validators to exchange votes on every block. High validator counts
-increase bandwidth quadratically (PBFT) or linearly per view (HotStuff).
+increase bandwidth quadratically (PBFT) or linearly per view (HotStuff). These are design
+characteristics, not deployment measurements.
 
 ### 7.3 Latency sensitivity
 
-BFT finality requires multiple communication rounds (typically 2-4). Latency scales with
-round count and network delay.
+BFT finality requires multiple communication rounds. Latency scales with round count and
+network delay. Exact round counts and latency are protocol- and deployment-specific.
 
 ### 7.4 Validator communication patterns
 
-All-to-all (PBFT), leader-centric (Tendermint/HotStuff), gossip (Avalanche), DAG
-broadcast (Narwhal).
+All-to-all (PBFT), leader-centric (Tendermint/HotStuff), gossip (Avalanche-family —
+protocol-specific, unverified), DAG broadcast (Narwhal/Tusk [NarwhalTusk2022]).
 
 ### 7.5 Quorum availability
 
-During partitions, quorums may be unreachable. Liveness is sacrificed until reconnection.
+During partitions, quorums may be unreachable. Liveness is sacrificed until reconnection
+[DworkLynchStockmeyer1988; CastroLiskov1999]. Safety is preserved under the protocol's
+fault bound during partitions.
 
 ### 7.6 Synchronization and state transfer
 
 New or rejoining validators must synchronise state. Snapshots and state proofs reduce
 sync time. FeinStatic's snapshot-transfer engineering (v2.0.0/v2.1.0) is relevant
-reference material.
+reference material for state transfer mechanics, though its consensus model differs from
+FST's target.
 
 ### 7.7 Recovery after partitions
 
@@ -498,17 +614,20 @@ validator count and state size.
 ### 7.8 Validator geographic distribution
 
 Geographic diversity improves partition resilience but increases latency (speed of light).
+This is a physical constraint, not a protocol choice.
 
 ### 7.9 Performance degradation under packet loss
 
-Packet loss increases timeouts and retransmissions, degrading liveness.
+Packet loss increases timeouts and retransmissions, degrading liveness. The degree of
+degradation is protocol- and implementation-specific.
 
 ### 7.10 Multi-transport compatibility
 
 FST requires internet, mesh, radio, satellite, and delay-tolerant networks (decision
 D-019). BFT protocols assume reliable point-to-point channels; adaptation to store-and-forward
 or intermittent links is open research. No consensus protocol can guarantee global progress
-during arbitrary prolonged partitions while preserving safety (CAP/FLP).
+during arbitrary prolonged partitions while preserving safety (CAP [GilbertLynch2002] and
+FLP [FischerLynchPaterson1985]).
 
 ## 8. Security assumptions and attack analysis
 
@@ -516,65 +635,78 @@ during arbitrary prolonged partitions while preserving safety (CAP/FLP).
 
 FST must define: number of Byzantine validators, network synchrony, adversary resources
 (hash rate, stake, bandwidth), and adversary goals (double-spend, censorship, liveness
-denial).
+denial). The adversary model is unresolved (decision D-017).
 
 ### 8.2 Byzantine fault threshold
 
-Classical BFT: f of 3f+1 (~33%). Nakamoto PoW: <50% hash rate. PoS: honest stake
-majority. These thresholds assume the Sybil-resistance mechanism holds.
+Classical BFT: f of 3f+1 (~33%) under partial synchrony with known participant set
+[CastroLiskov1999; LamportShostakPease1982]. Nakamoto PoW: <50% hash rate
+[Nakamoto2008]. PoS: honest-stake-majority assumptions that vary by protocol
+[Ouroboros2017; OuroborosPraos2017; Gasper2020]. These thresholds are **not** universal;
+each depends on its Sybil-resistance and synchrony assumptions.
 
 ### 8.3 Safety guarantees
 
-BFT: deterministic safety under quorum intersection. Nakamoto: probabilistic safety
-(Reorg depth k).
+BFT: deterministic safety under quorum intersection and the protocol's fault bound
+[CastroLiskov1999]. Nakamoto: probabilistic safety (reorg depth k) [Nakamoto2008]. Gasper:
+deterministic checkpoint finality qualified by Byzantine-stake and slashing assumptions
+[Gasper2020; CasperFFG2017].
 
 ### 8.4 Liveness assumptions
 
-BFT: partial synchrony, quorum connectivity. Nakamoto: honest majority hash rate.
+BFT: partial synchrony, quorum connectivity [DworkLynchStockmeyer1988; CastroLiskov1999].
+Nakamoto: honest-majority hash rate [Nakamoto2008]. PoS: protocol-specific honest-stake
+and network assumptions [OuroborosPraos2017; Gasper2020].
 
 ### 8.5 Sybil-resistance assumptions
 
-PoW: adversary cannot acquire >50% hash rate. PoS: adversary cannot acquire >50% stake.
-Both require the underlying resource to be costly and decentralised.
+PoW: adversary cannot acquire >50% hash rate [Nakamoto2008]. PoS: adversary cannot acquire
+protocol-specific honest-stake majority [Ouroboros2017; Gasper2020]. Both require the
+underlying resource to be costly and decentralised [Douceur2002].
 
 ### 8.6 Cryptographic assumptions
 
 Digital signatures (Ed25519, BLS), hash functions (SHA-256), VRFs, threshold signatures.
 FeinStatic uses Ed25519 and X25519/HKDF/AES-GCM; reuse requires cryptographic review
-(decision D-023).
+(decision D-023). These are implementation considerations, not consensus guarantees.
 
 ### 8.7 Economic security assumptions
 
 Attack cost > attack gain. Depends on token value, total stake/hash rate, and slashing.
+This is an economic modeling question, not a protocol guarantee.
 
 ### 8.8 Network synchrony assumptions
 
-Partial synchrony for most BFT. Asynchrony sacrifices liveness guarantees.
+Partial synchrony for most BFT [DworkLynchStockmeyer1988]. Asynchrony sacrifices liveness
+guarantees [FischerLynchPaterson1985].
 
 ### 8.9 Known attacks
 
-- Double-spend (Nakamoto reorg, BFT equivocation)
-- Long-range attack (PoS)
-- Nothing-at-stake (PoS)
-- Selfish mining (PoW)
-- Eclipse attack (P2P layer)
-- DDoS on leaders (leader-based BFT)
-- Censorship (validator collusion)
-- MEV extraction (ordering control)
+- Double-spend (Nakamoto reorg [Nakamoto2008], BFT equivocation [CastroLiskov1999])
+- Long-range attack (PoS [EthereumWeakSubjectivity2024; CasperFFG2017])
+- Nothing-at-stake (PoS [CasperFFG2017; Gasper2020])
+- Selfish mining (PoW — observed deployment phenomenon)
+- Eclipse attack (P2P layer — network-level attack)
+- DDoS on leaders (leader-based BFT — operational attack surface)
+- Censorship (validator collusion — economic/governance risk)
+- MEV extraction (ordering control — observed deployment phenomenon)
 
 ### 8.10 Formal proofs
 
-Many BFT protocols have safety proofs (PBFT, HotStuff, Tendermint). Nakamoto-style
-analysis is more heuristic (simplified models).
+Many BFT protocols have published safety proofs (PBFT [CastroLiskov1999], HotStuff
+[HotStuff2019], Tendermint/CometBFT — spec-dependent). Nakamoto-style analysis is more
+heuristic (simplified models) [Nakamoto2008]. Paper guarantees ≠ implementation security.
 
 ### 8.11 Known implementation vulnerabilities
 
-Production blockchain implementations have had consensus bugs (e.g., Tendermint
-consensus pauses, Ethereum finality issues). Paper guarantees ≠ implementation security.
+Production blockchain implementations have had consensus bugs. Paper guarantees do not
+equal implementation security. Specific vulnerabilities require deployment-specific
+investigation; this document does not enumerate them.
 
 ### 8.12 Operational attack surfaces
 
-P2P layer, node software, key management, upgrades, governance.
+P2P layer, node software, key management, upgrades, governance. These are operational
+considerations, not consensus properties.
 
 ## 9. Formal verification opportunities
 
@@ -585,18 +717,23 @@ P2P layer, node software, key management, upgrades, governance.
 - Reproducible test networks (chaos testing, partition testing).
 
 Formal verification increases confidence but does not eliminate implementation risk.
+Verification targets are protocol-specific and require implementation artifacts.
 
 ## 10. Existing implementations
 
 **Examine without copying:**
 
-- **Bitcoin Core:** PoW Nakamoto-style, long deployment, extensive test network.
-- **CometBFT (formerly Tendermint):** BFT, deterministic finality, used in Cosmos SDK.
+- **Bitcoin Core:** PoW Nakamoto-style, long deployment, extensive test network
+  [Nakamoto2008; BitcoinCore2024 — implementation reference].
+- **CometBFT (formerly Tendermint):** BFT, deterministic finality, used in Cosmos SDK
+  [CometBFTConsensusSpec2024; TendermintDraft2014 — historical draft].
 - **Ethereum consensus clients:** Gasper (LMD-GHOST + Casper FFG), multiple independent
-  implementations (Prysm, Lighthouse, Teku, Nimbus, Lodestar).
-- **Cardano:** Ouroboros family, PoS longest-chain.
-- **AlephBFT / Subspace:** DAG-based / asynchronous variants.
-- **Avalanche:** Avalanche consensus family.
+  implementations (Prysm, Lighthouse, Teku, Nimbus, Lodestar)
+  [Gasper2020; CasperFFG2017; EthereumGasper2024; EthereumWeakSubjectivity2024].
+- **Cardano:** Ouroboros family, PoS longest-chain [Ouroboros2017; OuroborosPraos2017].
+- **AlephBFT / Subspace:** DAG-based / asynchronous variants — source status UNRESOLVED.
+- **Avalanche:** Avalanche consensus family — source status UNRESOLVED; retained as
+  evaluation candidate (see Section 4.5 correction).
 
 **What to learn:** protocol specifications, node architecture, validator software, test
 networks, test vectors, state synchronisation, upgrade mechanisms, operational requirements,
@@ -606,82 +743,103 @@ known limitations.
 
 ## 11. Detailed comparison matrix
 
-| Criterion | Classical BFT (PBFT) | Leader BFT (HotStuff/Tendermint) | Nakamoto PoW | PoS Longest-Chain (Ouroboros/Gasper) | DAG-Based (Narwhal/Tusk, AlephBFT) |
-|-----------|----------------------|----------------------------------|--------------|--------------------------------------|--------------------------------------|
-| Permissionless participation | No (fixed set) | No (fixed set, stake-layer needed) | Yes (any miner) | Yes (any staker) | No (fixed set, Sybil-layer needed) |
-| Byzantine resistance | f of 3f+1 (~33%) | f of 3f+1 (~33%) | <50% hash rate | Honest stake majority | f of 3f+1 (~33%) |
-| Sybil resistance | None intrinsic | None intrinsic | Proof of Work | Stake | None intrinsic |
-| Safety assumptions | Partial synchrony, quorum intersection | Partial synchrony, quorum intersection | Honest majority hash | Honest stake majority, finality gadget | Partial synchrony / asynchrony variants |
+| Criterion | Classical BFT (PBFT) | Leader BFT (HotStuff/Tendermint) | Nakamoto PoW | PoS Longest-Chain (Ouroboros/Gasper) | DAG-Based (Narwhal/Tusk) |
+|-----------|----------------------|----------------------------------|--------------|--------------------------------------|--------------------------|
+| Permissionless participation | No (fixed set) | No (fixed set, Sybil-layer needed) | Yes (any miner) | Yes (any staker) | No (fixed set, Sybil-layer needed) |
+| Byzantine resistance | f of 3f+1 (~33%) [PBFT] | f of 3f+1 (~33%) [HotStuff] | <50% hash rate [PoW] | Honest-stake majority (protocol-specific) [PoS] | f of 3f+1 (~33%) [DAG-BFT] |
+| Sybil resistance | None intrinsic | None intrinsic | Proof of Work [PoW] | Stake (protocol-specific) [PoS] | None intrinsic |
+| Safety assumptions | Partial synchrony, quorum intersection [PBFT] | Partial synchrony, quorum intersection [HotStuff] | Honest majority hash [PoW] | Honest stake + finality gadget [PoS] | Partial synchrony / asynchrony variants |
 | Liveness assumptions | Partial synchrony, quorum connectivity | Partial synchrony, leader rotation | Honest majority hash | Honest stake, network synchrony | Network conditions |
 | Network partitions | Safety preserved, liveness lost | Safety preserved, liveness lost | Temporary forks, eventual convergence | Temporary forks, eventual convergence | Safety preserved, liveness lost |
-| Finality | Deterministic | Deterministic | Probabilistic | Probabilistic + checkpoint finality | Deterministic / probabilistic variants |
-| Throughput | Limited by O(n²) messages | Limited by O(n) per view | Limited by block size/interval | Limited by block parameters | High under good conditions |
-| Latency | Multiple rounds (2-4) | Multiple rounds (2-4+ view changes) | Minutes to hours | Seconds to minutes (finality gadget) | Low under good conditions |
-| Bandwidth | O(n²) per block | O(n) per view, O(n²) view change | O(n) block propagation | O(n) per block | O(n) per transaction (mempool) |
-| Decentralisation | Permissioned, centralised | Permissioned, centralised | Mining pools concentrate | Stake concentration, pools concentrate | Depends on Sybil layer |
+| Finality | Deterministic [PBFT] | Deterministic [HotStuff] | Probabilistic [PoW] | Probabilistic + checkpoint finality [PoS] | Deterministic / probabilistic variants |
+| Throughput | Limited by O(n²) messages [PBFT] | Limited by O(n) per view [HotStuff] | Limited by block size/interval | Limited by block parameters | High under good conditions [Narwhal/Tusk] |
+| Latency | Multiple rounds (2-4) | Multiple rounds (2-4+) | Minutes to hours | Seconds to minutes (finality gadget) | Low under good conditions |
+| Bandwidth | O(n²) per block [PBFT] | O(n) per view [HotStuff] | O(n) block propagation | O(n) per block | O(n) per transaction |
+| Decentralisation | Permissioned | Permissioned (Sybil-layer needed) | Mining pools concentrate | Stake concentration, pools concentrate | Depends on Sybil layer |
 | Incentives | None intrinsic | None intrinsic | Block reward + fees | Stake rewards + fees | None intrinsic |
-| Attack resistance | Well-studied | Well-studied | Long deployment, known attacks | Long-range, nothing-at-stake | Less deployment history |
-| Implementation maturity | Research + prototypes | Production (Cosmos, Diem) | Production (Bitcoin) | Production (Cardano, Ethereum) | Research + early production |
+| Attack resistance | Well-studied [PBFT] | Well-studied [HotStuff] | Long deployment, known attacks | Long-range, nothing-at-stake | Less deployment history |
+| Implementation maturity | Research + prototypes | Production (Cosmos, CometBFT) | Production (Bitcoin) | Production (Cardano, Ethereum) | Research + early production |
 | Independent clients | Limited | Multiple (Cosmos SDK) | Multiple (Bitcoin Core, etc.) | Multiple (Ethereum clients) | Limited |
 | Offline compatibility | None | None | None (requires global consensus) | None | None |
 
-*Note: Qualitative assessment only. No quantitative scores invented. Published results vary by
-implementation and network conditions.*
+*Note: Qualitative assessment only. No quantitative scores invented. Protocol-specific
+assumptions and deployment results vary. AlephBFT and Avalanche-family are excluded from
+this matrix because their sources could not be verified (UNRESOLVED).*
 
 ## 12. Architecture candidates for FST
 
 Based on FST's requirements (permissionless, Byzantine, multi-transport, offline-capable,
-no privileged operator), the following candidate families warrant further investigation:
+no privileged operator), the following candidate architecture families warrant further
+investigation. None is selected or approved.
 
 ### Candidate 1: Leader-based BFT with stake Sybil layer
+
 **HotStuff / Tendermint-style consensus with stake-weighted validator set.**
-- Advantages: deterministic finality, linear communication (HotStuff), deterministic
-  finality, well-understood safety.
+
+- Advantages: deterministic finality, linear per-view communication (HotStuff),
+  well-understood safety [HotStuff2019; CastroLiskov1999].
 - Weaknesses: permissioned consensus core requires stake layer for permissionless entry;
-  quadratic view changes (Tendermint); leader DDoS target; stake centralisation.
+  leader DDoS target; stake centralisation; Tendermint/CometBFT communication complexity
+  requires current spec inspection.
 - Compatible with FST: partially; requires Sybil-resistance research and stake economics.
 
 ### Candidate 2: Nakamoto-style Proof of Work
+
 **Bitcoin-style longest-chain with PoW.**
+
 - Advantages: genuinely permissionless, long deployment track record, no stake
-  concentration at genesis, no slashing complexity.
+  concentration at genesis, no slashing complexity [Nakamoto2008].
 - Weaknesses: probabilistic finality (slow), high energy cost, mining centralisation,
-  51% attack threshold, slow settlement for financial transactions.
+  51% attack threshold, slow settlement [Nakamoto2008].
 - Compatible with FST: partially; finality and energy concerns unresolved.
 
 ### Candidate 3: Proof-of-stake longest-chain with finality gadget
+
 **Ouroboros / Gasper-style.**
-- Advantages: deterministic checkpoint finality, permissionless staking, lower energy than
-  PoW.
+
+- Advantages: deterministic checkpoint finality (Gasper), permissionless staking, lower
+  energy than PoW [Gasper2020; Ouroboros2017].
 - Weaknesses: stake concentration, long-range attacks, nothing-at-stake, economic circularity
-  (token value funds security), complex slashing.
+  (token value funds security), complex slashing [CasperFFG2017; Gasper2020].
 - Compatible with FST: partially; aligns with native asset but centralisation risks unresolved.
 
 ### Candidate 4: Hybrid: BFT finality gadget + Nakamoto-style ordering
+
 **Finality gadget (Casper FFG-style) layered on a permissionless ordering protocol.**
-- Advantages: probabilistic ordering with deterministic finality checkpoints.
+
+- Advantages: probabilistic ordering with deterministic finality checkpoints
+  [CasperFFG2017].
 - Weaknesses: complexity, interaction between layers, Sybil-resistance for both layers.
 - Compatible with FST: partially; research needed on layer interaction.
 
 ### Candidate 5: DAG-based mempool-consensus separation
+
 **Narwhal/Tusk-style.**
+
 - Advantages: high throughput, linear per-transaction bandwidth, mempool/consensus
-  separation.
+  separation [NarwhalTusk2022].
 - Weaknesses: complexity, less deployment history, permissioned core requires Sybil layer,
-  liveness under asynchrony not guaranteed.
+  liveness under asynchrony not guaranteed [NarwhalTusk2022; FischerLynchPaterson1985].
 - Compatible with FST: partially; throughput benefits for financial network.
+
+### Candidate 6: Avalanche-family (evaluation candidate)
+
+**Retained pending source verification.** The previous categorical exclusion is withdrawn
+(see Section 4.5). Probabilistic safety under bounded adversary; suitability for FST
+financial settlement requires protocol-specific research [UNRESOLVED source].
 
 ## 13. Unsuitable approaches and reasons
 
 - **Plain Raft:** crash-fault only, permissioned, no Byzantine tolerance (decision D-024).
-- **Purely asynchronous BFT without timing assumptions:** cannot guarantee liveness (FLP);
-  FST needs liveness under realistic conditions.
-- **Avalanche-style probabilistic safety alone:** does not provide deterministic safety
-  guarantees expected for financial settlement; requires additional analysis.
+- **Purely asynchronous BFT without timing assumptions:** cannot guarantee deterministic
+  liveness under full asynchrony (FLP [FischerLynchPaterson1985]); randomized or
+  partial-synchrony variants required.
 - **Centralised or federated consensus:** violates P1, P2, P8 (unilateral control,
   privileged authority).
 - **Consensus without Sybil resistance in a permissionless setting:** quorum thresholds
-  are meaningless if identities are free.
+  are meaningless if identities are free [Douceur2002].
+- **Deterministic finality as a universal requirement:** not approved by the project owner
+  (decision D-017 remains OPEN RESEARCH); probabilistic finality remains a candidate.
 
 ## 14. Open technical questions
 
@@ -697,79 +855,87 @@ no privileged operator), the following candidate families warrant further invest
    delay-tolerant)?
 8. How many independent client implementations are needed before mainnet (decision D-035)?
 9. What is the offline operation model (bounded spending authority, reconciliation)?
-10. What are the upgrade and fork governance mechanisms (decision D-05)?
+10. What are the upgrade and fork governance mechanisms?
 
 ## 15. Research references
 
-**Verification status:** No external web access was available during this verification
-task. References below are recorded from training data and have NOT been independently
-verified against original publications. Each reference is marked with its verification
-status:
+**Verification date:** 2026-11-15. **Verification method:** Bibliographic records and URLs
+provided in the project architecture review task description. **No external web access was
+available** to inspect full papers, publisher pages, or DOI resolvers. All entries are
+marked PARTIALLY VERIFIED at best — source existence and bibliographic metadata are known
+from the task description, but paper content was not independently inspected.
 
-- **LIKELY** — Publication, authors, and venue match known published work from training
-  data; DOI/URL may be approximate.
-- **UNCERTAIN** — Bibliographic details may be incomplete or imprecise; requires
-  independent verification.
-- **UNRESOLVED** — Source could not be confirmed; treat as requiring replacement.
+Verification status definitions:
+- **VERIFIED:** Exact source and bibliographic record inspected. (None achieved in this
+  session due to lack of external web access.)
+- **PARTIALLY VERIFIED:** Source exists and metadata recorded, but only limited material
+  (title, authors, URL) was available; paper claims not inspected.
+- **UNRESOLVED:** Source or attributed claim has not been established.
 
-| # | Title | Authors | Date | Venue | DOI/URL | Relevance | Assumptions | Limitations | Verification |
-|---|-------|---------|------|-------|---------|-----------|-------------|-------------|--------------|
-| 1 | The Byzantine Generals Problem | Lamport, Shostak, Pease | 1982 | ACM Transactions on Programming Languages and Systems | doi:10.1145/357172.357176 | Byzantine agreement 3f+1 bound | Synchronous, known participants | Permissioned only | LIKELY |
-| 2 | Impossibility of Distributed Consensus with One Faulty Process | Fischer, Lynch, Paterson | 1985 | Journal of the ACM | doi:10.1145/3149.214121 | FLP impossibility | Deterministic, asynchronous | No randomisation | LIKELY |
-| 3 | Paxos Made Simple | Lamport | 2001 | ACM SIGACT News | — | Crash-fault consensus | Crash faults only | Not Byzantine | LIKELY |
-| 4 | Practical Byzantine Fault Tolerance | Castro, Liskov | 1999 | USENIX OSDI | — | BFT state machine replication | Partial synchrony, known set | O(n²), permissioned | LIKELY |
-| 5 | Bitcoin: A Peer-to-Peer Electronic Cash System | Nakamoto | 2008 | bitcoin.org whitepaper | bitcoin.org/bitcoin.pdf | Nakamoto-style PoW consensus | Honest majority hash | Probabilistic finality | LIKELY |
-| 6 | Ouroboros: A Provably Secure Proof-of-Stake Blockchain Protocol | Kiayias, Russell, David, Oliynykov | 2017 | IACR ePrint / Crypto 2017 | eprint.iacr.org/2017/573 | PoS longest-chain | Honest stake majority | Stake concentration | LIKELY |
-| 7 | HotStuff: BFT Consensus with Linearity | Yin, Malkhi, Reiter, et al. | 2019 | ACM PODC | doi:10.1145/3311374.3335964 | Linear BFT communication | Partial synchrony | View change O(n²) | LIKELY |
-| 8 | Tendermint: Consensus without Mining | Buchman | 2016 | Thesis / whitepaper | — | Leader-based BFT | Known validator set | O(n²) voting | UNCERTAIN |
-| 9 | Casper the Friendly Finality Gadget | Buterin, Griffith | 2019 | IACR ePrint | eprint.iacr.org/2019/573 | PoS finality gadget | Honest stake | Complexity | LIKELY |
-| 10 | Narwhal and Tusk: a DAG-based Mempool and Async BFT Consensus | Danezis, Nissenbaum, et al. | 2022 | USENIX NSDI | — | DAG-based consensus | Network conditions | Complexity | UNCERTAIN |
-| 11 | Weak Subjectivity | Buterin | 2016 | ethereum.org blog | ethereum.org | PoS long-range defence | Checkpoints | Social consensus | LIKELY |
-| 12 | The Sybil Attack | Douceur | 2002 | IPTPS | — | Sybil attack formalisation | Identity cost | No solution | LIKELY |
-| 13 | CAP Theorem | Brewer | 2000 | PODC keynote | — | Consistency/Availability/Partition | Partitions | Trade-off only | LIKELY |
-| 14 | Chia Network Proof of Space and Time | Chia Network | UNRESOLVED | UNRESOLVED | UNRESOLVED | Proof of Space/Time Sybil resistance | Storage cost | Source not confirmed | UNRESOLVED |
+| # | Title | Authors | Date | Venue | DOI/URL | Verification | Material inspected | Relevance to FST | What it establishes | What it does NOT establish |
+|---|-------|---------|------|-------|---------|--------------|-------------------|------------------|---------------------|---------------------------|
+| 1 | The Byzantine Generals Problem | Lamport, Shostak, Pease | 1982 | ACM TOPLAS | doi:10.1145/357172.357176 | PARTIALLY VERIFIED | Title, authors, date, venue, DOI from task description | Byzantine agreement 3f+1 bound | 3f+1 bound for Byzantine agreement | Permissioned setting; synchrony assumptions |
+| 2 | Impossibility of Distributed Consensus with One Faulty Process | Fischer, Lynch, Paterson | 1985 | J. ACM | doi:10.1145/3149.214121 | PARTIALLY VERIFIED | Title, authors, date, venue, DOI from task description | FLP impossibility | Deterministic termination impossible under async + 1 crash | Randomized async consensus; partial-synchrony liveness |
+| 3 | Consensus in the Presence of Partial Synchrony | Dwork, Lynch, Stockmeyer | 1988 | — | doi:10.1145/42282.42283 | PARTIALLY VERIFIED | Title, authors, date, DOI from task description | Partial synchrony model | Unknown message delay bound model | Protocol-specific liveness guarantees |
+| 4 | Practical Byzantine Fault Tolerance | Castro, Liskov | 1999 | USENIX OSDI | https://www.usenix.org/conference/osdi-99/practical-byzantine-fault-tolerance | PARTIALLY VERIFIED | Title, authors, date, venue, URL from task description | BFT state machine replication | 3f+1 bound, O(n²) voting, partial synchrony | Fixed participant set; implementation specifics |
+| 5 | The Sybil Attack | Douceur | 2002 | IPTPS | doi:10.1007/3-540-45748-8_24 | PARTIALLY VERIFIED | Title, authors, date, venue, DOI from task description | Sybil attack formalisation | Identity cost; Sybil attack definition | No specific Sybil-resistance solution |
+| 6 | Brewer's Conjecture and the Feasibility of Consistent, Available, Partition-Tolerant Web Services | Gilbert, Lynch | 2002 | — | doi:10.1145/564585.564601 | PARTIALLY VERIFIED | Title, authors, date, DOI from task description | CAP theorem | Consistency/availability/partition trade-off (linearizability) | Local bounded operation during partitions |
+| 7 | Bitcoin: A Peer-to-Peer Electronic Cash System | Nakamoto | 2008 | bitcoin.org whitepaper | https://bitcoin.org/bitcoin.pdf | PARTIALLY VERIFIED | Title, author, date, URL from task description | Nakamoto-style PoW consensus | PoW, longest-chain, probabilistic finality | Deployment measurements; energy costs |
+| 8 | HotStuff: BFT Consensus with Linearity and Responsiveness | Yin, Malkhi, Reiter, et al. | 2019 | ACM PODC | doi:10.1145/3293611.3331591 | PARTIALLY VERIFIED | Title, authors, date, venue, DOI from task description | Linear BFT communication | O(n) per view via quorum certificates | View-change complexity; pipelined variants |
+| 9 | Original Tendermint draft (v0.6) | Jae Kwon | 2014 | tendermint.com | https://tendermint.com/static/docs/tendermint.pdf | PARTIALLY VERIFIED | Title, author, date, URL from task description | Historical Tendermint design | Leader-based BFT, round-robin proposers | Outdated draft; not current spec |
+| 10 | CometBFT consensus specification | CometBFT project | Current (main branch) | GitHub | https://github.com/cometbft/cometbft/blob/main/spec/consensus/consensus.md | PARTIALLY VERIFIED | Title, URL from task description | Current BFT specification | Current implementation design | Paper results vs implementation behaviour |
+| 11 | Narwhal and Tusk: a DAG-based Mempool and Async BFT Consensus | Danezis, Nissenbaum, et al. | 2022 | EuroSys | doi:10.1145/3492321.3519594 | PARTIALLY VERIFIED | Title, authors, date, venue, DOI from task description | DAG-based consensus | Mempool/consensus separation, linear per-transaction DAG | Deployment throughput; async liveness guarantees |
+| 12 | Ouroboros: A Provably Secure Proof-of-Stake Blockchain Protocol | Kiayias, Russell, et al. | 2017 | CRYPTO | doi:10.1007/978-3-319-63688-7_12 | PARTIALLY VERIFIED | Title, authors, date, venue, DOI from task description | PoS longest-chain | Stake-weighted block proposal | Praos-specific improvements |
+| 13 | Ouroboros Praos | — | 2017 | IACR ePrint | https://eprint.iacr.org/2017/573 | PARTIALLY VERIFIED | Title, date, URL from task description | PoS with settlement delay | Probabilistic finality with settlement delay | Authors list; exact security claims |
+| 14 | Casper the Friendly Finality Gadget | Buterin, Griffith | 2017 | IACR ePrint / arxiv | https://arxiv.org/abs/1710.09437 | PARTIALLY VERIFIED | Title, authors, date, URL from task description | PoS finality gadget | Checkpoint finality, slashing | Gasper combined protocol |
+| 15 | Combining GHOST and Casper (Gasper) | — | 2020 | arxiv | https://arxiv.org/abs/2003.03052 | PARTIALLY VERIFIED | Title, date, URL from task description | Gasper protocol | LMD-GHOST + Casper FFG | Authors list; exact checkpoint finality parameters |
+| 16 | Diem State Machine Replication / DiemBFT | Diem project | — | developers.diem.com | https://developers.diem.com/docs/technical-papers/state-machine-replication-paper/ | PARTIALLY VERIFIED | Title, URL from task description | HotStuff-based BFT with epochs | Epoch changes, reconfiguration | Exact consensus parameters |
+| 17 | Ethereum Gasper documentation | Ethereum project | Current | ethereum.org | https://ethereum.org/developers/docs/consensus-mechanisms/pos/gasper/ | PARTIALLY VERIFIED | Title, URL from task description | Gasper implementation | LMD-GHOST + Casper FFG in Ethereum | Protocol specification details |
+| 18 | Ethereum Weak Subjectivity documentation | Ethereum project | Current | ethereum.org | https://ethereum.org/developers/docs/consensus-mechanisms/pos/weak-subjectivity/ | PARTIALLY VERIFIED | Title, URL from task description | Weak subjectivity | Checkpoints, long-range defence | Protocol parameter values |
+| 19 | Paxos Made Simple | Lamport | 2001 | ACM SIGACT News | — | PARTIALLY VERIFIED | Title, author, date, venue from task description | Crash-fault consensus (reference only) | Crash-fault, not Byzantine | Not applicable to Byzantine FST |
+
+**Sources removed (UNRESOLVED):** AlephBFT [Petermann2020], Avalanche-family [AvaWhitepaper2019],
+and Chia Proof of Space/Time [ChiaProofOfSpaceAndTime] — no authoritative source record
+was provided that permits confirmation of bibliographic metadata or protocol claims. These
+are not cited as supporting any factual claim in this document.
+
+**Inline citation resolution:** All inline citation keys now resolve to reference table
+entries #1-19. The previously unresolved DiemBFTWhitepaper2020 is now reference #10.
 
 ### 15.5 Source verification limitations
 
 **No external web access was available during this verification task.** The following
 limitations apply:
 
-- **References could not be independently verified** against original publications,
-  publisher websites, or DOI resolvers. All bibliographic metadata is recorded from
-  training data and may contain errors.
-- **DOIs marked "—" indicate no DOI was available in training data**, not that the
-  publication lacks one. Each such reference requires independent verification.
-- **Three references are marked UNCERTAIN or UNRESOLVED** and should be treated as
-  placeholders requiring replacement with verified sources:
-  - #8 Tendermint: Consensus without Mining (Buchman, 2016) — UNCERTAIN
-  - #10 Narwhal and Tusk (Danezis, Nissenbaum, et al., 2022) — UNCERTAIN
-  - #14 Chia Network Proof of Space and Time — UNRESOLVED (source not confirmed)
-- **Three inline citation keys reference sources not included in the reference table:**
-  - DiemBFTWhitepaper2020 — not in table
-  - Petermann2020 (AlephBFT) — not in table
-  - AvaWhitepaper2019 (Avalanche) — not in table
-  These require either addition to the reference table or removal from the text.
-- **Claim-to-source traceability:** Theoretical claims (FLP, 3f+1 bound, CAP theorem,
-  quorum intersection) are traceable to references #1-4 and #12-13. Protocol-specific
-  claims (message complexity, finality type, resilience) are traceable to references
-  #5-11 but require independent verification against protocol specifications and
-  published analyses. Economic and incentive claims (section 6) are qualitative
+- **No reference achieved VERIFIED status.** Full papers, publisher pages, and DOI
+  resolvers could not be inspected. All entries are PARTIALLY VERIFIED at best.
+- **Verification date:** 2026-11-15. **Material inspected:** Bibliographic records
+  (title, authors, date, venue, DOI/URL) provided in the task description only.
+- **Claim-to-source traceability:** Theoretical claims (FLP #2, 3f+1 bound #1 and #4,
+  CAP theorem #6, quorum intersection #4) trace to their respective references.
+  Protocol-specific claims (message complexity, finality type, resilience) trace to
+  references #4-18 but require independent inspection against protocol specifications
+  and published analyses. Economic and incentive claims (section 6) are qualitative
   assessments without specific source citations.
 
 ## 16. Recommended next investigation
 
-1. **Commission deep research** on 2-3 candidate families (e.g., HotStuff-style BFT,
+1. **Inspect full papers** for references #1-19 to verify bibliographic metadata and
+   extract protocol-specific claims (message complexity, finality type, fault bounds).
+2. **Resolve UNRESOLVED sources** (AlephBFT, Avalanche-family, Chia) or formally exclude
+   them from FST evaluation.
+3. **Commission deep research** on 2-3 candidate families (e.g., HotStuff-style BFT,
    Nakamoto PoW, PoS longest-chain) with full source review.
-2. **Define the FST adversary model** explicitly (Byzantine threshold, network assumptions,
+4. **Define the FST adversary model** explicitly (Byzantine threshold, network assumptions,
    adversary resources).
-3. **Investigate Sybil-resistance mechanisms** in the context of FST's native asset (FST
+5. **Investigate Sybil-resistance mechanisms** in the context of FST's native asset (FST
    only, scope D-014).
-4. **Determine finality requirements** for financial settlement (deterministic vs
+6. **Determine finality requirements** for financial settlement (deterministic vs
    probabilistic, latency bounds).
-5. **Study multi-transport consensus adaptation** for mesh, radio, satellite, and
+7. **Study multi-transport consensus adaptation** for mesh, radio, satellite, and
    delay-tolerant networks.
-6. **Resolve decision D-035** (independent client implementation count).
-7. **Commission independent security review** of any selected consensus design before
+8. **Resolve decision D-035** (independent client implementation count).
+9. **Commission independent security review** of any selected consensus design before
    implementation.
 
 All items remain OPEN RESEARCH. No design is approved.
