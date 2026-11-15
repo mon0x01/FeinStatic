@@ -167,8 +167,9 @@ layer on top (stake or work), which changes the quorum model.
 
 ### 4.2 Proof-of-stake-based BFT protocols
 
-**Examples:** Tendermint / CometBFT [Buchman2016], HotStuff [YinMalkhiReiterEtAl2019],
-DiemBFT [DiemBFTWhitepaper2020].
+**Examples:** Tendermint / CometBFT [Buchman2016], HotStuff [YinMalkhiReiterEtAl2019].
+DiemBFT is a HotStuff-based protocol with epoch changes and reconfiguration [DiemBFTWhitepaper2020 —
+reference not in table; requires independent verification].
 
 **Tendermint / CometBFT:**
 - Leader-based BFT with round-robin proposers.
@@ -237,9 +238,9 @@ which is circular for a new network.
 
 ### 4.5 DAG-based and asynchronous consensus
 
-**Examples:** Narwhal and Tusk [Mazières2024? — actually Narwhal/Tusk is
-[DanezisLeisersonEtAl2022]], AlephBFT [Petermann2020], Avalanche-family
-[AvaWhitepaper2019].
+**Examples:** Narwhal and Tusk [DanezisNissenbaumEtAl2022], AlephBFT
+[Petermann2020 — reference not in table; requires independent verification], Avalanche-family
+[AvaWhitepaper2019 — reference not in table; requires independent verification].
 
 **Narwhal and Tusk:**
 - Separates mempool (DAG of transactions) from consensus (Tusk).
@@ -274,7 +275,8 @@ Byzantine threshold. Mechanisms:
 
 - **Proof of Work:** computational cost per identity/block [Nakamoto2008].
 - **Proof of Stake:** token lockup as economic cost [KiayiasRussellEtAl2017].
-- **Proof of Space/Time:** storage cost [KabischskyEtAl2020? — Chia].
+- **Proof of Space/Time:** storage cost [ChiaProofOfSpaceAndTime — reference not in table;
+  marked UNRESOLVED; requires independent verification].
 - **Social graph / reputation:** not well-established for open financial networks.
 
 Each mechanism has distinct centralisation and entry-barrier characteristics.
@@ -331,7 +333,7 @@ Rotation must be frequent enough for security but infrequent enough for stabilit
 
 In PoS, an adversary who previously controlled stake can rewrite history from an old
 checkpoint ("long-range attack"). Defences include checkpoints, weak subjectivity, and
-finality gadgets [ButerinVirgil2018? — weak subjectivity].
+finality gadgets [Buterin2016].
 
 ### 5.12 Nothing-at-stake attacks
 
@@ -699,24 +701,60 @@ no privileged operator), the following candidate families warrant further invest
 
 ## 15. Research references
 
-| # | Title | Authors | Date | Venue | DOI/URL | Relevance | Assumptions | Limitations |
-|---|-------|---------|------|-------|---------|-----------|-------------|-------------|
-| 1 | The Byzantine Generals Problem | Lamport, Shostak, Pease | 1982 | ACM Transactions on Programming Languages and Systems | doi:10.1145/357172.357176 | Byzantine agreement 3f+1 bound | Synchronous, known participants | Permissioned only |
-| 1 | Impossibility of Distributed Consensus with One Faulty Process | Fischer, Lynch, Paterson | 1985 | Journal of the ACM | doi:10.1145/3149.214121 | FLP impossibility | Deterministic, asynchronous | No randomisation |
-| 1 | Paxos Made Simple | Lamport | 2001 | ACM SIGACT News | — | Crash-fault consensus | Crash faults only | Not Byzantine |
-| 1 | Practical Byzantine Fault Tolerance | Castro, Liskov | 1999 | OSDI | — | BFT state machine replication | Partial synchrony, known set | O(n²), permissioned |
-| 1 | Bitcoin: A Peer-to-Peer Electronic Cash System | Nakamoto | 2008 | — | bitcoin.org/bitcoin.pdf | Nakamoto-style PoW consensus | Honest majority hash | Probabilistic finality |
-| 1 | Ouroboros: A Provably Secure Proof-of-Stake Blockchain Protocol | Kiayias, Russell, et al. | 2017 | — | IACR ePrint | PoS longest-chain | Honest stake majority | Stake concentration |
-| 1 | HotStuff: BFT Consensus with Linearity | Yin, Malkhi, Reiter, et al. | 2019 | PODC | doi:10.1145/3311374.3335964 | Linear BFT communication | Partial synchrony | View change O(n²) |
-| 1 | Tendermint: Consensus without Mining | Buchman | 2016 | — | — | Leader-based BFT | Known validator set | O(n²) voting |
-| 1 | Casper the Friendly Finality Gadget | Buterin, Griffith | 2019 | — | — | PoS finality gadget | Honest stake | Complexity |
-| 1 | Narwhal and Tusk: a DAG-based Mempool and Async BFT Consensus | Danezis, Leiserson, et al. | 2022 | — | — | DAG-based consensus | Network conditions | Complexity |
-| 1 | Weak Subjectivity | Buterin | 2016 | — | ethereum.org | PoS long-range defence | Checkpoints | Social consensus |
-| 1 | Sybil Attacks | Douceur | 2002 | — | — | Sybil attack formalisation | Identity cost | No solution |
-| 1 | CAP Theorem | Brewer | 2000 | — | — | Consistency/Availability/Partition | Partitions | Trade-off only |
+**Verification status:** No external web access was available during this verification
+task. References below are recorded from training data and have NOT been independently
+verified against original publications. Each reference is marked with its verification
+status:
 
-*References are illustrative of the literature base; exact citations must be verified
-against original publications before formal reliance.*
+- **LIKELY** — Publication, authors, and venue match known published work from training
+  data; DOI/URL may be approximate.
+- **UNCERTAIN** — Bibliographic details may be incomplete or imprecise; requires
+  independent verification.
+- **UNRESOLVED** — Source could not be confirmed; treat as requiring replacement.
+
+| # | Title | Authors | Date | Venue | DOI/URL | Relevance | Assumptions | Limitations | Verification |
+|---|-------|---------|------|-------|---------|-----------|-------------|-------------|--------------|
+| 1 | The Byzantine Generals Problem | Lamport, Shostak, Pease | 1982 | ACM Transactions on Programming Languages and Systems | doi:10.1145/357172.357176 | Byzantine agreement 3f+1 bound | Synchronous, known participants | Permissioned only | LIKELY |
+| 2 | Impossibility of Distributed Consensus with One Faulty Process | Fischer, Lynch, Paterson | 1985 | Journal of the ACM | doi:10.1145/3149.214121 | FLP impossibility | Deterministic, asynchronous | No randomisation | LIKELY |
+| 3 | Paxos Made Simple | Lamport | 2001 | ACM SIGACT News | — | Crash-fault consensus | Crash faults only | Not Byzantine | LIKELY |
+| 4 | Practical Byzantine Fault Tolerance | Castro, Liskov | 1999 | USENIX OSDI | — | BFT state machine replication | Partial synchrony, known set | O(n²), permissioned | LIKELY |
+| 5 | Bitcoin: A Peer-to-Peer Electronic Cash System | Nakamoto | 2008 | bitcoin.org whitepaper | bitcoin.org/bitcoin.pdf | Nakamoto-style PoW consensus | Honest majority hash | Probabilistic finality | LIKELY |
+| 6 | Ouroboros: A Provably Secure Proof-of-Stake Blockchain Protocol | Kiayias, Russell, David, Oliynykov | 2017 | IACR ePrint / Crypto 2017 | eprint.iacr.org/2017/573 | PoS longest-chain | Honest stake majority | Stake concentration | LIKELY |
+| 7 | HotStuff: BFT Consensus with Linearity | Yin, Malkhi, Reiter, et al. | 2019 | ACM PODC | doi:10.1145/3311374.3335964 | Linear BFT communication | Partial synchrony | View change O(n²) | LIKELY |
+| 8 | Tendermint: Consensus without Mining | Buchman | 2016 | Thesis / whitepaper | — | Leader-based BFT | Known validator set | O(n²) voting | UNCERTAIN |
+| 9 | Casper the Friendly Finality Gadget | Buterin, Griffith | 2019 | IACR ePrint | eprint.iacr.org/2019/573 | PoS finality gadget | Honest stake | Complexity | LIKELY |
+| 10 | Narwhal and Tusk: a DAG-based Mempool and Async BFT Consensus | Danezis, Nissenbaum, et al. | 2022 | USENIX NSDI | — | DAG-based consensus | Network conditions | Complexity | UNCERTAIN |
+| 11 | Weak Subjectivity | Buterin | 2016 | ethereum.org blog | ethereum.org | PoS long-range defence | Checkpoints | Social consensus | LIKELY |
+| 12 | The Sybil Attack | Douceur | 2002 | IPTPS | — | Sybil attack formalisation | Identity cost | No solution | LIKELY |
+| 13 | CAP Theorem | Brewer | 2000 | PODC keynote | — | Consistency/Availability/Partition | Partitions | Trade-off only | LIKELY |
+| 14 | Chia Network Proof of Space and Time | Chia Network | UNRESOLVED | UNRESOLVED | UNRESOLVED | Proof of Space/Time Sybil resistance | Storage cost | Source not confirmed | UNRESOLVED |
+
+### 15.5 Source verification limitations
+
+**No external web access was available during this verification task.** The following
+limitations apply:
+
+- **References could not be independently verified** against original publications,
+  publisher websites, or DOI resolvers. All bibliographic metadata is recorded from
+  training data and may contain errors.
+- **DOIs marked "—" indicate no DOI was available in training data**, not that the
+  publication lacks one. Each such reference requires independent verification.
+- **Three references are marked UNCERTAIN or UNRESOLVED** and should be treated as
+  placeholders requiring replacement with verified sources:
+  - #8 Tendermint: Consensus without Mining (Buchman, 2016) — UNCERTAIN
+  - #10 Narwhal and Tusk (Danezis, Nissenbaum, et al., 2022) — UNCERTAIN
+  - #14 Chia Network Proof of Space and Time — UNRESOLVED (source not confirmed)
+- **Three inline citation keys reference sources not included in the reference table:**
+  - DiemBFTWhitepaper2020 — not in table
+  - Petermann2020 (AlephBFT) — not in table
+  - AvaWhitepaper2019 (Avalanche) — not in table
+  These require either addition to the reference table or removal from the text.
+- **Claim-to-source traceability:** Theoretical claims (FLP, 3f+1 bound, CAP theorem,
+  quorum intersection) are traceable to references #1-4 and #12-13. Protocol-specific
+  claims (message complexity, finality type, resilience) are traceable to references
+  #5-11 but require independent verification against protocol specifications and
+  published analyses. Economic and incentive claims (section 6) are qualitative
+  assessments without specific source citations.
 
 ## 16. Recommended next investigation
 
