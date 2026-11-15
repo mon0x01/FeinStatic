@@ -382,7 +382,7 @@ implementation) plus a global cap (proposed specification).
 Transaction dissemination is an application-layer concern. This specification defines
 only the network-layer boundaries within which transaction messages may propagate;
 it does not define transaction format, validity rules, fee markets, or mempool policy
-(transaction model OPEN RESEARCH, RS-002/RS-003).
+(transaction model OPEN RESEARCH, RS-015).
 
 ### 8.2 Dissemination rules (proposed specification)
 
@@ -496,7 +496,7 @@ OPEN RESEARCH (scope-v0.1.md).
 ### 11.3 Transaction replay across networks (unresolved)
 
 Transaction-level replay protection (chain ID in transaction signature, nonce, or
-alternative) is OPEN RESEARCH (transaction model, RS-002/RS-003). No mechanism is
+alternative) is OPEN RESEARCH (transaction model, RS-015). No mechanism is
 selected.
 
 ## 12. Upgrade Signaling Requirements and Compatibility Expectations

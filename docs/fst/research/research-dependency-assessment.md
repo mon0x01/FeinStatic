@@ -5,7 +5,7 @@
 approved research plan).
 **Milestone:** FST Milestone 2E — Core Protocol Specification and Node Architecture.
 **Related decisions:** D-015, D-016, D-017, D-018, D-019, D-020, D-021, D-035, D-036.
-**Related research:** RS-001 through RS-014.
+**Related research:** RS-001 through RS-015.
 
 This document reviews the existing research register (`research/research-register.md`),
 identifies the remaining research items that directly block later protocol and network
@@ -18,8 +18,8 @@ is selected.
 
 ## 1. Research Register Review
 
-The research register tracks 14 entries (RS-001 through RS-014), all classified OPEN.
-Two entries (RS-013, RS-014) have dedicated research documents. RS-014 records that
+The research register tracks 15 entries (RS-001 through RS-015), all classified OPEN.
+Three entries (RS-013, RS-014, RS-015) have dedicated research documents. RS-014 records that
 implementation was begun in Milestones 2C–2D (node identity, signed records, peer store,
 bootstrap discovery, peer exchange, TLS 1.3 secure sessions, message dispatch, network
 runtime), but the research document itself remains OPEN — no Noise handshake pattern,
@@ -37,12 +37,13 @@ impact.
 
 ### Priority 1 — Transaction model (blocks: transaction processing, mempool, dissemination)
 
-**Research entry:** RS-002 (transaction confidentiality and privacy) and RS-003 are
-related; the transaction model itself (account vs UTXO, fee market, replay protection) is
-cross-referenced from RS-002/RS-003 in the register but has no dedicated entry.
+**Research entry:** RS-015 (Transaction Model and State Representation) is the dedicated
+entry for the transaction model (account vs UTXO, fee market, replay protection). RS-002
+(Sybil-resistance mechanisms) and RS-003 (transaction confidentiality and privacy) are
+related but remain separate, intact OPEN research entries; they are not the transaction-
+model entry.
 
-**Classification:** OPEN RESEARCH (no dedicated RS ID; design implications recorded in
-RS-002 and RS-003).
+**Classification:** OPEN RESEARCH (RS-015).
 
 **What it blocks:**
 - Transaction serialization format (core protocol specification Section 8, unresolved).
@@ -292,7 +293,7 @@ The following are explicitly NOT completed in this milestone:
 
 - Consensus algorithm selection (D-017 OPEN RESEARCH).
 - Sybil-resistance mechanism (RS-002, D-016 PROVISIONAL).
-- Transaction model / account vs UTXO (OPEN RESEARCH).
+- Transaction model / account vs UTXO (OPEN RESEARCH, RS-015).
 - Privacy mechanism (D-020 PROVISIONAL, RS-003 OPEN).
 - Monetary policy (D-015 OPEN RESEARCH).
 - Offline operation mechanism (D-018 PROVISIONAL, RS-007 OPEN).
@@ -349,4 +350,5 @@ No OPEN RESEARCH or PROVISIONAL decision is converted to APPROVED.
   FeinStatic baseline and transformation findings.
 - [`consensus-validator-research.md`](consensus-validator-research.md) — RS-013 consensus and validator research.
 - [`identity-peer-discovery-research.md`](identity-peer-discovery-research.md) — RS-014 identity and peer discovery research.
+- [`transaction-model-research.md`](transaction-model-research.md) — RS-015 transaction model and state representation research.
 - [`../glossary.md`](../glossary.md) — FST glossary of terms.
