@@ -36,6 +36,8 @@ Each research entry follows this structure:
 | RS-008 | OPEN | Decentralised bridge to national currencies | TBD | Non-custodial FST<->fiat exchange |
 | RS-009 | OPEN | Light-client state proofs | TBD | Merkle commitments, sync protocols, pruning |
 | RS-010 | OPEN | Governance and on-chain upgrades | TBD | Upgrade signaling, participant veto, fork legitimacy |
+| RS-011 | OPEN | Compliance | TBD | Regulatory boundaries, jurisdictional differences, protocol vs service-provider responsibilities, fiat on/off-ramp requirements, custodian/exchange/liquidity-provider compliance, lawful services without unilateral protocol control |
+| RS-012 | OPEN | Independent client implementation count | TBD | Research one, two, or three independent client implementations before mainnet |
 
 ## How to add a new entry
 

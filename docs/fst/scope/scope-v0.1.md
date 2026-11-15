@@ -147,6 +147,40 @@ The following migration design is **provisional**:
 
 **Do not implement migration functionality** in this milestone.
 
+## Fork protection requirements (APPROVED)
+
+The following requirements are **approved** for any fork creating independent networks:
+
+1. Every independent network must have a unique network identity.
+2. Transactions must be protected against replay across networks.
+3. Independent currencies must have distinct identifiers so wallets, exchanges and
+   users cannot confuse them.
+
+Cross-reference: [`D-036`](../decisions/decision-register.md).
+
+The implementation mechanisms for these requirements (chain-ID format, signing scheme,
+token symbols, etc.) remain **OPEN RESEARCH**. No specific mechanism is selected.
+
+## Regional outage extensions (SUPERSEDED)
+
+The following earlier design ideas are **superseded** and must not be implemented:
+
+- Regional outage-based migration extensions.
+- Anonymous regional credentials.
+- Decentralised outage verification for migration windows.
+
+The migration rules in this section control: migration opens only after the destination
+network is fully operational and stable; the migration window is a fixed, publicly
+announced period; the closing deadline is permanent; there are no outage-based
+extensions; there are no regional exceptions; there are no additional special migration
+periods; after closure, users may use ordinary market-based exchange between the
+currencies.
+
+Cross-reference: [`D-021`](../decisions/decision-register.md).
+
+This supersession does not affect FST's broader requirement to support offline financial
+operation, which remains part of the project vision (see Offline financial operation).
+
 ## Out of scope for this milestone
 
 The following are explicitly **not** part of this documentation-only milestone:

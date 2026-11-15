@@ -16,6 +16,7 @@ existing FeinStatic implementation.
 | Transaction privacy | OPEN RESEARCH | Confidential transactions, identity privacy, selective disclosure |
 | Key management | OPEN RESEARCH | Permissionless identity, key rotation, threshold signatures, recovery |
 | Node and key custody | OPEN RESEARCH | Non-custodial key management, no master key (principle P8) |
+| Compliance | OPEN RESEARCH | Regulatory boundaries, jurisdictional differences, protocol vs independent service-provider responsibilities, fiat on-ramp and off-ramp requirements, custodian/exchange/liquidity-provider compliance, lawful services without unilateral protocol control |
 
 ## Known limitations of FeinStatic (for reference only)
 

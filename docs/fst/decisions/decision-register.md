@@ -55,6 +55,8 @@ investigation and discussion.
 | D-032 | 2026-11-15 | FeinStatic snapshot patterns reusable | PROVISIONAL | Preserve crash-recovery and streaming patterns. | [`architecture/feinstat-baseline.md`](../architecture/feinstat-baseline.md) |
 | D-033 | 2026-11-15 | FeinStatic CLI is development tool | PROVISIONAL | Not the eventual network interface. | [`architecture/feinstat-baseline.md`](../architecture/feinstat-baseline.md) |
 | D-034 | 2026-11-15 | FeinStatic tests preserved and extended | PROVISIONAL | Preserve and extend testing patterns. | [`architecture/feinstat-baseline.md`](../architecture/feinstat-baseline.md) |
+| D-035 | 2026-11-15 | Independent client implementation count | OPEN RESEARCH | Research one, two, or three independent client implementations before mainnet; no final number selected. | [`research/research-register.md`](../research/research-register.md) |
+| D-036 | 2026-11-15 | Fork protection requirements | APPROVED | Unique network identity, replay protection, distinct currency identifiers for independent networks. Implementation mechanisms open research. | [`scope/scope-v0.1.md`](../scope/scope-v0.1.md) |
 
 ## How to add a new decision
 
