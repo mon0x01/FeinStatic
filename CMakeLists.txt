@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
 find_package(SQLite3 3.24 REQUIRED)
 find_package(Boost 1.74 CONFIG REQUIRED)
 find_package(Threads REQUIRED)
@@ -41,6 +41,11 @@ add_library(feinstatic_core
     src/network/peer_store.cpp
     src/network/bootstrap.cpp
     src/network/peer_exchange.cpp
+    src/network/secure_session.cpp
+    src/network/peer_session.cpp
+    src/network/peer_admission.cpp
+    src/network/message_dispatch.cpp
+    src/network/network_runtime.cpp
     src/consensus/fork_choice.cpp
     src/consensus/raft.cpp
     src/consensus/raft_membership.cpp
@@ -57,7 +62,7 @@ add_library(FeinStatic::Core ALIAS feinstatic_core)
 target_include_directories(feinstatic_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
 )
-target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto ${FEINSTATIC_SQLITE_TARGET} Threads::Threads)
+target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto OpenSSL::SSL ${FEINSTATIC_SQLITE_TARGET} Threads::Threads)
 target_include_directories(feinstatic_core SYSTEM PRIVATE ${Boost_INCLUDE_DIRS})
 # Compile against the non-deprecated Boost.Asio surface to catch API removals early.
 target_compile_definitions(feinstatic_core PUBLIC BOOST_ASIO_NO_DEPRECATED)
@@ -116,6 +121,10 @@ if(FEINSTATIC_BUILD_TESTS)
         tests/bootstrap_tests.cpp
         tests/peer_exchange_tests.cpp
         tests/network_discovery_tests.cpp
+        tests/secure_session_tests.cpp
+        tests/peer_admission_tests.cpp
+        tests/message_dispatch_tests.cpp
+        tests/network_integration_tests.cpp
     )
     target_link_libraries(feinstatic_tests PRIVATE FeinStatic::Core)
     add_dependencies(feinstatic_tests feinstatic)
@@ -141,4 +150,10 @@ target_compile_options(feinstatic_bench PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
 )
 
-install(TARGETS feinstatic feinstatic_bench RUNTIME DESTINATION bin)
+add_executable(feinstatic-demo apps/feinstatic-demo/main.cpp)
+target_link_libraries(feinstatic-demo PRIVATE FeinStatic::Core)
+target_compile_options(feinstatic-demo PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>
+)
+
+install(TARGETS feinstatic feinstatic_bench feinstatic-demo RUNTIME DESTINATION bin)
