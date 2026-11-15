@@ -355,4 +355,7 @@ No OPEN RESEARCH or PROVISIONAL decision is converted to APPROVED.
 - [`consensus-validator-research.md`](consensus-validator-research.md) — RS-013 consensus and validator research.
 - [`identity-peer-discovery-research.md`](identity-peer-discovery-research.md) — RS-014 identity and peer discovery research.
 - [`transaction-model-research.md`](transaction-model-research.md) — RS-015 transaction model and state representation research.
+- [`../security/adversary-model-v0.1.md`](../security/adversary-model-v0.1.md) — FST adversary model (Milestone 2H; OPEN RESEARCH).
+- [`../architecture/permissionless-test-network-evaluation.md`](../architecture/permissionless-test-network-evaluation.md) — Deep candidate evaluation and test-network requirements (Milestone 2H; OPEN RESEARCH).
+- [`../architecture/permissionless-test-network-decision-brief.md`](../architecture/permissionless-test-network-decision-brief.md) — Owner decision briefs (Milestone 2H; no decision approved).
 - [`../glossary.md`](../glossary.md) — FST glossary of terms.

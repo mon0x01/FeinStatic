@@ -61,5 +61,8 @@ Each research entry follows this structure:
 - [`research-dependency-assessment.md`](research-dependency-assessment.md) — Research
   dependency and priority assessment (Milestone 2E).
 - [`../adr/adr-template.md`](../adr/adr-template.md) — ADR template.
-- [`../decisions/decision-register.md`](../decisions/decision-register.md) — Decision register.
+- [`../decisions/decision-register.md`](../decisions/decision-register.md) — Decision classifications.
 - [`../../scope/scope-v0.1.md`](../../scope/scope-v0.1.md) — FST project scope.
+- [`../security/adversary-model-v0.1.md`](../security/adversary-model-v0.1.md) — FST adversary model (Milestone 2H; OPEN RESEARCH; cross-references RS-001/RS-002/RS-013).
+- [`../architecture/permissionless-test-network-evaluation.md`](../architecture/permissionless-test-network-evaluation.md) — Deep consensus–Sybil evaluation (Milestone 2H; OPEN RESEARCH).
+- [`../architecture/permissionless-test-network-decision-brief.md`](../architecture/permissionless-test-network-decision-brief.md) — Owner decision briefs (Milestone 2H; no decision approved).

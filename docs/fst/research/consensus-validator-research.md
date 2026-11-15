@@ -1481,3 +1481,11 @@ Each reference below records bibliographic metadata, material inspected, exactly
 
 All items remain OPEN RESEARCH. No design is approved.
 
+## 24. Cross-references to Milestone 2H
+
+- [`../security/adversary-model-v0.1.md`](../security/adversary-model-v0.1.md) — FST adversary model (RS-017-equivalent research output; OPEN RESEARCH). Defines threat classes, parameterized fault-bound parameters (not FST constants), and candidate architecture assumptions.
+- [`../architecture/permissionless-test-network-evaluation.md`](../architecture/permissionless-test-network-evaluation.md) — Deep evaluation of consensus–Sybil compositions C1, C3, C5; transaction-model sensitivity analysis; test-network requirements; comparison matrices (Milestone 2H).
+- [`../architecture/permissionless-test-network-decision-brief.md`](../architecture/permissionless-test-network-decision-brief.md) — Owner decision briefs for transaction model, Sybil direction, consensus architecture, finality, adversary assumptions, and test-network security boundaries (Milestone 2H).
+
+No decision in these documents is approved; D-016 PROVISIONAL and D-017 OPEN RESEARCH classifications are preserved.
+

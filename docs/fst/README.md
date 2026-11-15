@@ -39,11 +39,15 @@ docs/fst/
 │   └── decision-register.md       # Register of APPROVED / PROVISIONAL / OPEN RESEARCH decisions
 ├── security/
 │   ├── security-research-register.md  # Security research register
-│   └── threat-model-v0.1.md       # Network threat model (M2E)
+│   ├── threat-model-v0.1.md          # Network threat model (M2E)
+│   └── adversary-model-v0.1.md       # FST adversary model (Milestone 2H; OPEN RESEARCH)
 ├── spec/
 │   └── core-protocol-specification-v0.1.md  # Versioned core protocol specification (M2E)
 ├── roadmap/
 │   └── development-roadmap.md     # Development roadmap
+├── architecture/
+│   ├── permissionless-test-network-evaluation.md  # Deep consensus–Sybil evaluation (Milestone 2H; OPEN RESEARCH)
+│   └── permissionless-test-network-decision-brief.md  # Owner decision briefs (Milestone 2H; no decision approved)
 └── glossary.md                    # Glossary of terms
 ```
 

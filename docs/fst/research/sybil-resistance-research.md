@@ -481,3 +481,8 @@ All items remain OPEN RESEARCH. No mechanism is approved or selected.
 - [`../architecture/node-roles.md`](../architecture/node-roles.md) — Validator-capable node role (future; Sybil resistance unresolved).
 - [`../research/research-register.md`](research-register.md) — Research register (RS-001 through RS-015).
 - [`../glossary.md`](../glossary.md) — Sybil resistance definition.
+- [`../security/adversary-model-v0.1.md`](../security/adversary-model-v0.1.md) — FST adversary model (OPEN RESEARCH). Threat classes include Sybil identity operators; parameterized thresholds, not FST constants.
+- [`../architecture/permissionless-test-network-evaluation.md`](../architecture/permissionless-test-network-evaluation.md) — Deep evaluation of Sybil–consensus compositions (Milestone 2H; OPEN RESEARCH).
+- [`../architecture/permissionless-test-network-decision-brief.md`](../architecture/permissionless-test-network-decision-brief.md) — Owner decision brief for Sybil-resistance direction (Milestone 2H; D-016 PROVISIONAL preserved).
+
+No mechanism is approved or selected; D-016 PROVISIONAL classification is preserved.
