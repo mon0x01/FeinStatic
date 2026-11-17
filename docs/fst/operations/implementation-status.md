@@ -4,7 +4,7 @@
 
 **Version:** 1.0
 **Date:** 2026-11-17
-**Git HEAD:** `276976a2d80dec31bc88d9756f9ce33a2681c691` (main)
+**Git HEAD:** `c6a23ae` (main)
 **Classification:** Live document — updated at every durable checkpoint.
 
 ---
@@ -169,7 +169,7 @@ and updated at every durable checkpoint.
 | MW-003 | GitHub README maintenance | COMPLETE | README.md rewritten to describe current FST scope | README.md content review; accuracy check against implementation | README.md verified against implementation; all links/paths/build/test commands checked |
 | MW-004 | Local AGENTS.md protection | COMPLETE | /AGENTS.md in .gitignore; AGENTS.md removed from Git index (git rm --cached); working-tree file preserved intact (525 lines) | .gitignore entry; git ls-files confirms untracked; git check-ignore confirms rule applies; local file readable | No further action — AGENTS.md is local-only, untracked, and ignored |
 | MW-005 | Safe feature branch integration | COMPLETE | Sanitized publication branch created from origin/main; all 73 verified FST files transferred; AGENTS.md excluded from publication; merged into GitHub main via fast-forward; local main tracks origin/main; original history preserved under main-dev-backup-20261117 | git push origin main-sync:main; remote main at 8a1465c; GitHub verified AGENTS.md absent | None |
-| MW-006 | Post-cleanup and post-merge verification | COMPLETE | Full Debug build PASS (343/343 tests); Release build PASS (340/343, 3 timing-dependent Release-mode flakiness documented as FST-BUG-0017); ASan/UBSan build PASS (CometBFT integration tests require local CometBFT binary at /tmp/kilo/cometbft); Clang Release + -Werror build PASS; CI dependency fix verified (libprotobuf-dev, libabsl-dev added); network bootstrap + config() reference fix verified (5 previously failing network tests now pass); demo, benchmark, raft chaos, raft membership labs all PASS | Build logs; test binary output; updated operation records; defect register updated | None |
+| MW-006 | Post-cleanup and post-merge verification | COMPLETE | CI build PASSES on Ubuntu 24.04 (protobuf generated at build time via protobuf_generate, Abseil linked via glob); CI tests: 338/343 pass, 5 timing-dependent Release-mode failures documented as FST-BUG-0017; Local Debug build: 343/343 PASS; Local Release build: 340/343 PASS (3 timing flakiness); Local ASan/UBSan build: PASS; Local Clang Release + -Werror build: PASS; CI dependency fix verified (libprotobuf-dev, libabsl-dev, protobuf-compiler added); network bootstrap + config() reference fix verified; demo, benchmark, raft chaos, raft membership labs all PASS | CI run 44178479493; build logs; test binary output; updated operation records; defect register updated | None |
 | MW-007 | Track B — Repository Quality and Maintenance | COMPLETE | Track B section added to project-plan.md; AGENTS.md continue/stop updated to require Track B; local-only files protection policy added to Track B B4; AGENTS.md removed from Git index (.gitignore enforced); GitHub synchronized (sanitized publication branch, fast-forward merge into main); CI dependency fix (FST-BUG-0016 VERIFIED_FIXED); network test fixes committed | Track B acceptance criteria recorded in implementation-status.md and verification-status.md; defect register updated with FST-BUG-0016, FST-BUG-0017 | Verify consistency across all four authoritative records |
 
 ---

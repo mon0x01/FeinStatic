@@ -13,7 +13,7 @@ This document is the single source of truth for FST scope and implementation ord
 - Development roadmap (`docs/fst/roadmap/development-roadmap.md`)
 - Architecture specifications and ADRs (`docs/fst/architecture/`, `docs/fst/adr/`)
 - Research register and dependency assessment (`docs/fst/research/research-register.md`)
-- Actual current implementation and unfinished milestones (Git HEAD `276976a`)
+- Actual current implementation and unfinished milestones (Git HEAD `c6a23ae`)
 
 ## Phase Overview
 
@@ -464,7 +464,7 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 
 ---
 
-## Current Status Summary (as of 2026-11-17, Git HEAD `276976a`)
+## Current Status Summary (as of 2026-11-17, Git HEAD `c6a23ae`)
 
 | Phase | Requirements | IMPLEMENTED | PARTIALLY_IMPLEMENTED | IN_PROGRESS | NOT_STARTED | BLOCKED | DEFERRED |
 |-------|--------------|-------------|----------------------|-------------|-------------|---------|----------|
