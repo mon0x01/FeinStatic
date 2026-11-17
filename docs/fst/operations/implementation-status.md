@@ -4,7 +4,7 @@
 
 **Version:** 1.0
 **Date:** 2026-11-17
-**Git HEAD:** `32b44b7` (main)
+**Git HEAD:** `8a1465c` (main)
 **Classification:** Live document — updated at every durable checkpoint.
 
 ---
@@ -168,8 +168,8 @@ and updated at every durable checkpoint.
 | MW-002 | Directory nesting simplification | NOT_STARTED | None | Before/after directory listing; updated CMakeLists.txt; build verification | Assess directory structure for unnecessary nesting |
 | MW-003 | GitHub README maintenance | COMPLETE | README.md rewritten to describe current FST scope | README.md content review; accuracy check against implementation | README.md verified against implementation; all links/paths/build/test commands checked |
 | MW-004 | Local AGENTS.md protection | COMPLETE | /AGENTS.md in .gitignore; AGENTS.md removed from Git index (git rm --cached); working-tree file preserved intact (525 lines) | .gitignore entry; git ls-files confirms untracked; git check-ignore confirms rule applies; local file readable | No further action — AGENTS.md is local-only, untracked, and ignored |
-| MW-005 | Safe feature branch integration | NOT_STARTED | None | git fetch/log/diff output; conflict review; post-merge build and test results | 21 commits ahead of origin/main — do not push; unpublished history contains historical AGENTS.md versions |
-| MW-006 | Post-cleanup and post-merge verification | NOT_STARTED | None | Build logs; test results; updated project records; defect entries | Run after any structural change or merge |
+| MW-005 | Safe feature branch integration | COMPLETE | Sanitized publication branch created from origin/main; all 73 verified FST files transferred; AGENTS.md excluded from publication; merged into GitHub main via fast-forward; local main tracks origin/main; original history preserved under main-dev-backup-20261117 | git push origin main-sync:main; remote main at 8a1465c; GitHub verified AGENTS.md absent | None |
+| MW-006 | Post-cleanup and post-merge verification | COMPLETE | Full build in Debug (PASS); complete test suite (338 passed, 5 pre-existing flaky network harness tests as documented); all four operation records updated; no defects introduced | Build logs; test binary output; updated operation records | None |
 | MW-007 | Track B — Repository Quality and Maintenance | COMPLETE | Track B section added to project-plan.md; AGENTS.md continue/stop updated to require Track B; local-only files protection policy added to Track B B4 | Track B acceptance criteria recorded in implementation-status.md and verification-status.md | Verify consistency across all four authoritative records |
 
 ---

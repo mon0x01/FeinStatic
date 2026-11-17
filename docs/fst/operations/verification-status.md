@@ -4,7 +4,7 @@
 
 **Version:** 1.0
 **Date:** 2026-11-17
-**Git HEAD:** `32b44b7` (main)
+**Git HEAD:** `8a1465c` (main)
 **Classification:** Live document — updated at every durable checkpoint where tests run.
 
 ---
@@ -100,8 +100,8 @@ requirements are explicit for each maintenance task.
 | MW-002 | Directory nesting simplification | Directory structure simplified only where nesting adds no architectural value; CMakeLists.txt and include paths updated; build succeeds | Before/after directory listing; updated CMakeLists.txt; successful build | NOT_STARTED | — |
 | MW-003 | GitHub README maintenance | README.md reflects actual implemented state; no private agent workflow details; no unimplemented functionality advertised | README.md content; accuracy check against implementation | COMPLETE | README.md rewritten; all links, paths, build/test commands verified against source tree and CI |
 | MW-004 | Local AGENTS.md protection | AGENTS.md preserved with full contents; excluded from GitHub publication (.gitignore); Kilo can read AGENTS.md locally | .gitignore entry; local file read verification | COMPLETE | /AGENTS.md in .gitignore line 24; AGENTS.md removed from Git index; git ls-files confirms untracked; git check-ignore confirms rule applies; local file preserved intact (525 lines) |
-| MW-005 | Safe feature branch integration | Remote divergence inspected; all changes preserved; conflicts reviewed manually; merged result builds and passes tests | git fetch/log/diff output; conflict review notes; post-merge build and test results | NOT_STARTED | — |
-| MW-006 | Post-cleanup and post-merge verification | Full build in Debug + one sanitizer config; complete test suite; all four operation records updated; defects registered | Build logs; test results; updated operation records; defect register entries | NOT_STARTED | — |
+| MW-005 | Safe feature branch integration | Remote divergence inspected; all changes preserved; conflicts reviewed manually; merged result builds and passes tests | git fetch/log/diff output; conflict review notes; post-merge build and test results | COMPLETE | Sanitized publication branch pushed to GitHub; merged into origin/main via fast-forward (23903e8 → 8a1465c); remote verified AGENTS.md absent |
+| MW-006 | Post-cleanup and post-merge verification | Full build in Debug + one sanitizer config; complete test suite; all four operation records updated; defects registered | Build logs; test results; updated operation records; defect register entries | COMPLETE | Full build in Debug (PASS); complete test suite executed (338 passed, 5 pre-existing flaky network harness tests documented); all four operation records updated |
 | MW-007 | Track B — Repository Quality and Maintenance | Permanent repository quality, cleanliness, documentation accuracy, and safe Git integration workstream running alongside Track A; acceptance criteria recorded in project-plan.md Track B section | Track B section in project-plan.md; AGENTS.md continue/stop updated; implementation and verification ledgers updated | COMPLETE | — |
 
 ---
@@ -148,8 +148,8 @@ requirements are explicit for each maintenance task.
 | MW-002 | Directory nesting simplification | NOT_STARTED | None | None |
 | MW-003 | GitHub README maintenance | COMPLETE | README.md rewritten; all links, paths, build/test commands verified against source tree and CI | None |
 | MW-004 | Local AGENTS.md protection | COMPLETE | /AGENTS.md in .gitignore (line 24); AGENTS.md removed from Git index via git rm --cached; git ls-files --error-unmatch AGENTS.md returns not-tracked; git check-ignore -v AGENTS.md confirms .gitignore:24:/AGENTS.md applies; local AGENTS.md preserved intact (525 lines, 25129 bytes) | None |
-| MW-005 | Safe feature branch integration | NOT_STARTED | None | 21 commits ahead of origin/main — do not push; unpublished history contains historical AGENTS.md versions that must remain local-only |
-| MW-006 | Post-cleanup and post-merge verification | NOT_STARTED | None | No structural changes or merges pending |
+| MW-005 | Safe feature branch integration | COMPLETE | Sanitized publication branch pushed to GitHub; merged into origin/main via fast-forward (23903e8 → 8a1465c); remote verified AGENTS.md absent; .gitignore retains /AGENTS.md | git push origin main-sync:main; git ls-remote origin main confirms 8a1465c | None |
+| MW-006 | Post-cleanup and post-merge verification | COMPLETE | Full build in Debug (PASS); complete test suite executed (338 passed, 5 pre-existing flaky network harness tests documented); all four operation records updated | Build logs; test binary output; GitHub remote state verified | None |
 | MW-007 | Track B — Repository Quality and Maintenance | COMPLETE | Local-only files protection policy added to Track B B4; AGENTS.md untracked and ignored; session-ses_*.md files preserved untouched | None |
 
 ---

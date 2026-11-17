@@ -4,7 +4,7 @@
 
 **Version:** 1.0
 **Date:** 2026-11-16
-**Git HEAD:** `32b44b7` (main)
+**Git HEAD:** `8a1465c` (main)
 **Classification:** Live document — updated when defects discovered, investigated, fixed, or verified.
 
 **Defect ID Format:** `FST-BUG-XXXX` (sequential, never reused).
