@@ -33,7 +33,8 @@ jobs:
           cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
             -Dprotobuf_BUILD_TESTS=OFF \
             -Dprotobuf_BUILD_EXAMPLES=OFF \
-            -Dprotobuf_BUILD_PROTOC_BINARIES=ON
+            -Dprotobuf_BUILD_PROTOC_BINARIES=ON \
+            -Dprotobuf_ABSL_PROVIDER=bundle
           cmake --build build -j$(nproc) --target protoc protobuf
           sudo cmake --install build --prefix /usr/local
           sudo ldconfig
