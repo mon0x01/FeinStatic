@@ -30,7 +30,7 @@ jobs:
           curl -sL -o protobuf.tar.gz -L "https://github.com/protocolbuffers/protobuf/archive/refs/tags/v36.2.tar.gz"
           tar xzf protobuf.tar.gz
           cd protobuf-36.2
-          cmake -S cmake -B build -DCMAKE_BUILD_TYPE=Release \
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
             -Dprotobuf_BUILD_TESTS=OFF \
             -Dprotobuf_BUILD_EXAMPLES=OFF \
             -Dprotobuf_BUILD_PROTOC_BINARIES=ON
