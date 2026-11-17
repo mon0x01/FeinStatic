@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <climits>
 #include <cstring>
+#include <mutex>
 #include <stdexcept>
 #include <system_error>
 #include <utility>
@@ -177,6 +178,7 @@ void PeerStore::ensure_schema() {
 }
 
 void PeerStore::load_all() {
+    std::lock_guard<std::mutex> lock(mutex_);
     peers_.clear();
     size_ = 0;
     Statement stmt(db_,
@@ -255,6 +257,7 @@ DiscoverySource PeerStore::parse_discovery_source(const std::string& tag) {
 
 UpsertResult PeerStore::upsert(const SignedNodeRecord& record, DiscoverySource source,
                                 std::uint64_t now_unix_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!opened_) throw std::runtime_error("peer store is not open");
 
     const NodeId& node_id = record.node_id;
@@ -315,12 +318,14 @@ UpsertResult PeerStore::upsert(const SignedNodeRecord& record, DiscoverySource s
 }
 
 std::optional<PeerEntry> PeerStore::get(const NodeId& node_id) const noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(node_id);
     if (it == peers_.end()) return std::nullopt;
     return it->second.entry;
 }
 
 std::vector<PeerEntry> PeerStore::list(bool verified_only) const {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<PeerEntry> result;
     result.reserve(peers_.size());
     for (const auto& [id, impl] : peers_) {
@@ -332,6 +337,7 @@ std::vector<PeerEntry> PeerStore::list(bool verified_only) const {
 }
 
 void PeerStore::mark_connected(const NodeId& node_id, bool connected) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(node_id);
     if (it == peers_.end()) return;
     it->second.entry.connection_state.connected = connected;
@@ -340,6 +346,7 @@ void PeerStore::mark_connected(const NodeId& node_id, bool connected) noexcept {
 
 void PeerStore::record_connection_attempt(const NodeId& node_id, bool success,
                                            std::uint64_t now_unix_ms) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(node_id);
     if (it == peers_.end()) return;
     auto& state = it->second.entry.connection_state;
@@ -355,6 +362,7 @@ void PeerStore::record_connection_attempt(const NodeId& node_id, bool success,
 }
 
 void PeerStore::touch(const NodeId& node_id, std::uint64_t now_unix_ms) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(node_id);
     if (it == peers_.end()) return;
     it->second.entry.last_seen_unix_ms = now_unix_ms;
@@ -362,6 +370,7 @@ void PeerStore::touch(const NodeId& node_id, std::uint64_t now_unix_ms) noexcept
 }
 
 void PeerStore::mark_verified(const NodeId& node_id, std::uint64_t now_unix_ms) noexcept {
+    std::lock_guard<std::mutex> lock(mutex_);
     auto it = peers_.find(node_id);
     if (it == peers_.end()) return;
     it->second.entry.connection_state.verified = true;
@@ -370,6 +379,7 @@ void PeerStore::mark_verified(const NodeId& node_id, std::uint64_t now_unix_ms) 
 }
 
 std::size_t PeerStore::cleanup_expired(std::uint64_t now_unix_ms) {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::size_t removed = 0;
     for (auto it = peers_.begin(); it != peers_.end();) {
         const PeerEntry& entry = it->second.entry;
@@ -400,6 +410,7 @@ std::size_t PeerStore::cleanup_expired(std::uint64_t now_unix_ms) {
 }
 
 void PeerStore::save() {
+    std::lock_guard<std::mutex> lock(mutex_);
     if (!opened_) return;
     for (auto& [id, impl] : peers_) {
         (void)id;

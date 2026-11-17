@@ -19,7 +19,8 @@ AdmissionController::AdmissionController(
     Config config)
     : store_(store), bootstrap_(bootstrap), authenticator_(authenticator),
       exchange_(exchange), tls_context_(tls_context),
-      identity_(std::move(identity)), config_(std::move(config)) {
+      identity_(std::move(identity)), config_(std::move(config)),
+      work_guard_(boost::asio::make_work_guard(io_)) {
     // bootstrap_ and exchange_ are stored for future use;
     // they are intentionally not referenced in the current implementation.
     (void)bootstrap_;
@@ -111,7 +112,9 @@ void AdmissionController::on_connect(std::shared_ptr<SecureSession> session,
     // Use the verified peer NodeId from the handshake result for all
     // post-handshake operations. The pre-handshake node_id is only used for
     // admission-control bookkeeping before the handshake.
-    const NodeId& peer_id = result.peer_node_id;
+    // Copy (not reference) the verified peer NodeId. `result` is later moved
+    // into the PeerSession below, which would leave a reference alias empty.
+    const NodeId peer_id = result.peer_node_id;
     const std::uint64_t now = static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count());
@@ -125,6 +128,10 @@ void AdmissionController::on_connect(std::shared_ptr<SecureSession> session,
 
     auto existing = sessions_.find(peer_id);
     if (existing != sessions_.end()) {
+        // An outbound attempt that resolves to an existing session never
+        // becomes an established connection, so release the slot reserved in
+        // connect_to_peer. Inbound attempts hold no reservation.
+        if (!host.empty()) --outbound_count_;
         resolve_duplicate(peer_id, std::make_shared<PeerSession>(
             std::move(session), std::move(result), now));
         callback(boost::system::error_code{}, existing->second.session);
@@ -151,9 +158,19 @@ void AdmissionController::on_connect(std::shared_ptr<SecureSession> session,
                                                        std::move(result), now);
     bool outbound = !host.empty();
     sessions_.emplace(peer_id, ConnectionEntry{peer_session, outbound, now});
-    if (outbound) ++outbound_count_; else ++inbound_count_;
+    // Outbound slots are reserved (counted) in connect_to_peer before the
+    // connection attempt is issued; only inbound connections increment their
+    // counter here. Incrementing outbound_count_ again would double-count.
+    if (!outbound) ++inbound_count_;
 
     lifecycles_.emplace(peer_id, PeerLifecycle(peer_id.value(), config_.lifecycle));
+
+    // Notify the runtime that a new authenticated session is admitted so a
+    // dispatch worker can be started for it. Invoked while holding
+    // sessions_mutex_, matching the documented contract.
+    if (on_session_established) {
+        on_session_established(peer_session);
+    }
 
     callback(boost::system::error_code{}, peer_session);
 }
@@ -166,20 +183,13 @@ void AdmissionController::connect_to_peer(
     NodeId tracking_id = expected_peer_node_id.value_or(NodeId{});
 
     // Check admission limits under the lock, then release before async I/O.
+    // Backoff/rate-limiting is an automatic-reconnect policy enforced by
+    // reconnect_peer(); explicit connect_to_peer() calls always attempt.
     {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
         if (!can_initiate_outbound(tracking_id)) {
             callback(boost::system::errc::make_error_code(boost::system::errc::not_a_stream), nullptr);
             return;
-        }
-
-        auto lifecycle_it = lifecycles_.find(tracking_id);
-        if (lifecycle_it != lifecycles_.end()) {
-            auto now = std::chrono::steady_clock::now();
-            if (!lifecycle_it->second.can_attempt(now)) {
-                callback(boost::system::errc::make_error_code(boost::system::errc::timed_out), nullptr);
-                return;
-            }
         }
 
         // Reserve outbound capacity.
@@ -207,6 +217,21 @@ void AdmissionController::connect_to_peer(
 void AdmissionController::reconnect_peer(
     const NodeId& node_id,
     std::function<void(boost::system::error_code, std::shared_ptr<PeerSession>)> callback) {
+    // Automatic reconnects are rate-limited by the peer lifecycle backoff.
+    // Explicit connect_to_peer() calls are not gated here.
+    {
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        auto lifecycle_it = lifecycles_.find(node_id);
+        if (lifecycle_it != lifecycles_.end()) {
+            const auto now = std::chrono::steady_clock::now();
+            if (!lifecycle_it->second.can_attempt(now)) {
+                callback(boost::system::errc::make_error_code(boost::system::errc::timed_out),
+                         nullptr);
+                return;
+            }
+        }
+    }
+
     auto entry = store_.get(node_id);
     if (!entry) {
         callback(boost::system::errc::make_error_code(boost::system::errc::no_such_process), nullptr);
@@ -297,6 +322,19 @@ void AdmissionController::remove_session_locked(const NodeId& node_id) noexcept 
     sessions_.erase(it);
 }
 
+void AdmissionController::session_closed(const NodeId& node_id) noexcept {
+    std::lock_guard<std::mutex> lock(sessions_mutex_);
+    session_closed_locked(node_id);
+}
+
+void AdmissionController::session_closed_locked(const NodeId& node_id) noexcept {
+    auto it = sessions_.find(node_id);
+    if (it == sessions_.end()) return;
+    if (it->second.outbound) --outbound_count_; else --inbound_count_;
+    store_.mark_connected(node_id, false);
+    sessions_.erase(it);
+}
+
 void AdmissionController::tick(std::uint64_t now_unix_ms) {
     std::unique_lock<std::mutex> lock(sessions_mutex_);
 
@@ -315,7 +353,9 @@ void AdmissionController::tick(std::uint64_t now_unix_ms) {
 
     auto now = std::chrono::steady_clock::now();
     for (auto& [node_id, lifecycle] : lifecycles_) {
-        if (lifecycle.can_attempt(now) && !lifecycle.enabled()) continue;
+        // Only automatic reconnects are rate-limited; reconnect_peer() enforces
+        // the lifecycle backoff, so skip peers that cannot attempt right now.
+        if (!lifecycle.can_attempt(now)) continue;
         auto session_it = sessions_.find(node_id);
         if (session_it == sessions_.end()) {
             // Release lock before doing async I/O to avoid deadlock.

@@ -20,6 +20,9 @@ __pycache__/
 /build/
 /cmake-build-*/
 
+# Local project context (never publish)
+/AGENTS.md
+
 # Databases, journals, logs and backups
 *.db
 *.db-shm

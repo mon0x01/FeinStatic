@@ -314,7 +314,12 @@ do_send_handshake([this, handler = std::move(handler),
 }
 
 void SecureSession::close(boost::system::error_code& ec) noexcept {
-    ssl_stream_.shutdown(ec);
+    // Shut down the underlying transport rather than performing a TLS-level
+    // close_notify handshake. A TLS shutdown would block waiting for a peer
+    // that may not reciprocate, and would race with a dispatch worker that is
+    // blocked in a synchronous read on this same stream. A transport shutdown
+    // unblocks any blocked read/write and never waits on the peer.
+    ssl_stream_.next_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     ssl_stream_.next_layer().close(ec);
 }
 
@@ -439,21 +444,23 @@ void SecureSession::do_send_handshake(Handler handler) {
     frame.push_back(static_cast<Byte>(length & 0xff));
     frame.insert(frame.end(), handshake.begin(), handshake.end());
 
-    boost::asio::async_write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()),
+    // The async_write buffer and the completion handler's ownership of the frame
+    // must be established without relying on argument evaluation order. If the
+    // move-into-lambda capture were evaluated before buffer(frame.data(), ...) the
+    // buffer would reference moved-from storage (nullptr, 0) and async_write would
+    // complete with success while writing zero bytes, leaving the peer's read
+    // blocked forever. Establish the buffer first, then move the frame into the
+    // handler so the buffer remains valid for the lifetime of the async operation.
+    auto write_buffer = boost::asio::buffer(frame);
+    boost::asio::async_write(ssl_stream_, std::move(write_buffer),
         [this, frame = std::move(frame), handler = std::move(handler),
          session_nonce](const boost::system::error_code& ec, std::size_t) mutable {
+            (void)frame;
             if (ec) { handler(ec, {}); return; }
-            do_receive_handshake([this, handler = std::move(handler),
-                                 session_nonce](const boost::system::error_code& ec2,
-                                                SecureHandshakeResult result) mutable {
-                if (ec2) { handler(ec2, {}); return; }
-                handshake_result_.session_nonce = session_nonce;
-                do_verify_handshake(result, std::nullopt,
-                                    [handler = std::move(handler)](const boost::system::error_code& ec3,
-                                                                    SecureHandshakeResult result) {
-                                        handler(ec3, result);
-                                    });
-            });
+            // Record our session nonce so it survives until the peer's handshake
+            // is received and verified by the caller (async_accept/async_connect).
+            handshake_result_.session_nonce = session_nonce;
+            handler(boost::system::error_code{}, {});
         });
 }
 
@@ -471,7 +478,11 @@ void SecureSession::do_receive_handshake(Handler handler) {
                 return;
             }
             std::vector<Byte> buffer(expected);
-            boost::asio::async_read(ssl_stream_, boost::asio::buffer(buffer),
+            // Same argument-evaluation-order hazard as do_send_handshake: build
+            // the read buffer before moving the storage into the completion
+            // handler so the async_read cannot reference moved-from memory.
+            auto read_buffer = boost::asio::buffer(buffer);
+            boost::asio::async_read(ssl_stream_, std::move(read_buffer),
                 [handler = std::move(handler), buffer = std::move(buffer)](
                     const boost::system::error_code& ec2, std::size_t) mutable {
                     if (ec2) { handler(ec2, {}); return; }

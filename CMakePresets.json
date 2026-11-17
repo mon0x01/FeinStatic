@@ -48,6 +48,17 @@
         "CMAKE_CXX_FLAGS": "-Werror",
         "FEINSTATIC_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "tsan",
+      "displayName": "Debug with ThreadSanitizer (Ninja)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/tsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "FEINSTATIC_BUILD_TESTS": "ON",
+        "FEINSTATIC_ENABLE_THREAD_SANITIZER": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -69,6 +80,11 @@
     {
       "name": "clang-release",
       "configurePreset": "clang-release",
+      "jobs": 2
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
       "jobs": 2
     }
   ],
@@ -97,6 +113,13 @@
     {
       "name": "clang-release",
       "configurePreset": "clang-release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
       "output": {
         "outputOnFailure": true
       }

@@ -43,6 +43,10 @@ Never convert a discussion or suggestion into an approved design without owner a
 | ID | Status | Title | Date | Classification | Supersedes |
 |----|--------|-------|------|----------------|------------|
 | ADR-0001 | PROPOSED | Candidate-neutral multi-node network integration and fault-injection test harness | 2026-11-15 | OPEN RESEARCH pending owner review | — |
+| ADR-0002 | ACCEPTED | UTXO ledger and transaction/state architecture | 2026-11-17 | APPROVED (D-037) | — |
+| ADR-0003 | ACCEPTED | Permissionless native-FST Proof-of-Stake validator eligibility | 2026-11-17 | APPROVED (D-016) | — |
+| ADR-0004 | ACCEPTED | BFT consensus, finality and CometBFT integration | 2026-11-17 | APPROVED (D-017) | — |
+| ADR-0005 | ACCEPTED | Monetary issuance and transaction-fee architecture | 2026-11-17 | APPROVED (D-015) | — |
 
 ## How to create a new ADR
 

@@ -77,6 +77,11 @@ public:
     void reconnect_peer(const NodeId& node_id,
                         std::function<void(boost::system::error_code, std::shared_ptr<PeerSession>)> callback);
 
+    // Notify the admission controller that a session has been closed by the peer
+    // or by the dispatch worker, so it is removed from admission bookkeeping and
+    // its inbound/outbound counters are decremented. Safe to call from any thread.
+    void session_closed(const NodeId& node_id) noexcept;
+
     // Look up an existing session by node ID.
     [[nodiscard]] std::shared_ptr<PeerSession> session(const NodeId& node_id) const noexcept;
 
@@ -86,6 +91,10 @@ public:
     [[nodiscard]] std::size_t inbound_count() const noexcept;
     [[nodiscard]] std::size_t outbound_count() const noexcept;
     [[nodiscard]] std::uint16_t listen_port() const noexcept { return listen_port_; }
+
+    // Callback invoked (with sessions_mutex_ held) when a new authenticated
+    // session is admitted. Used by NetworkRuntime to start a dispatch worker.
+    std::function<void(std::shared_ptr<PeerSession>)> on_session_established;
 
     // Run the periodic maintenance tick (cleanup, reconnection, health checks).
     void tick(std::uint64_t now_unix_ms);
@@ -112,6 +121,7 @@ private:
     bool can_initiate_outbound(const NodeId& node_id) const noexcept;
     void resolve_duplicate(const NodeId& node_id, std::shared_ptr<PeerSession> new_session);
     void remove_session_locked(const NodeId& node_id) noexcept;
+    void session_closed_locked(const NodeId& node_id) noexcept;
 
     PeerStore& store_;
     BootstrapDiscovery& bootstrap_;
@@ -122,6 +132,7 @@ private:
     Config config_;
 
     boost::asio::io_context io_;
+    boost::asio::executor_work_guard<boost::asio::io_context::executor_type> work_guard_;
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor_;
     std::thread io_thread_;
     std::atomic<bool> running_{false};
@@ -129,8 +140,8 @@ private:
     mutable std::mutex sessions_mutex_;
     std::map<NodeId, ConnectionEntry> sessions_;
     std::map<NodeId, PeerLifecycle> lifecycles_;
-    std::size_t inbound_count_{0};
-    std::size_t outbound_count_{0};
+    std::atomic<std::size_t> inbound_count_{0};
+    std::atomic<std::size_t> outbound_count_{0};
     std::uint64_t last_cleanup_unix_ms_{0};
     std::uint16_t listen_port_{0};
 };

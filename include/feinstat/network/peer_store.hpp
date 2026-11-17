@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
@@ -136,6 +137,7 @@ private:
     std::string path_;
     sqlite3* db_{nullptr};
     bool opened_{false};
+    mutable std::mutex mutex_;
     std::map<NodeId, PeerEntryImpl> peers_;
     std::size_t size_{0};
 };

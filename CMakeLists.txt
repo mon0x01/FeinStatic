@@ -12,6 +12,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 find_package(OpenSSL 3.0 REQUIRED COMPONENTS Crypto SSL)
 find_package(SQLite3 3.24 REQUIRED)
 find_package(Boost 1.74 CONFIG REQUIRED)
+find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)
 
 # CMake 4.x renamed the imported target; retain compatibility with CMake 3.25+.
@@ -51,6 +52,22 @@ add_library(feinstatic_core
     src/consensus/raft_membership.cpp
     src/consensus/raft_storage.cpp
     src/consensus/raft_ledger_adapter.cpp
+    src/monetary/engine.cpp
+    src/consensus/abci/abci_codec.cpp
+    src/consensus/abci/abci_socket_server.cpp
+    src/consensus/abci/fst_application.cpp
+    src/consensus/abci/protobuf/gogoproto/gogo.pb.cc
+    src/consensus/abci/protobuf/tendermint/crypto/keys.pb.cc
+    src/consensus/abci/protobuf/tendermint/types/params.pb.cc
+    src/consensus/abci/protobuf/tendermint/crypto/proof.pb.cc
+    src/consensus/abci/protobuf/google/protobuf/timestamp.pb.cc
+    src/consensus/abci/protobuf/tendermint/abci/types.pb.cc
+    src/consensus/abci/protobuf/tendermint/types/validator.pb.cc
+    src/staking/state.cpp
+    src/utxo/encoding.cpp
+    src/utxo/validation.cpp
+    src/utxo/utxo_set.cpp
+    src/utxo/mempool.cpp
     src/exchange/matching_engine.cpp
     src/flow/amm.cpp
     src/application/amount.cpp
@@ -61,8 +78,10 @@ add_library(FeinStatic::Core ALIAS feinstatic_core)
 
 target_include_directories(feinstatic_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/abci/protobuf>
+    ${Protobuf_INCLUDE_DIRS}
 )
-target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto OpenSSL::SSL ${FEINSTATIC_SQLITE_TARGET} Threads::Threads)
+target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto OpenSSL::SSL ${FEINSTATIC_SQLITE_TARGET} Threads::Threads protobuf absl_base absl_cord absl_cord_internal absl_cordz_functions absl_cordz_handle absl_cordz_info absl_crc32c absl_crc_cord_state absl_crc_internal absl_base_cpu_detect absl_leak_check absl_log_internal_check_op absl_log_internal_conditions absl_log_internal_format absl_log_internal_message absl_log_internal_nullguard absl_log_internal_proto absl_log_internal_structured_proto absl_log_severity absl_log_sink absl_log_entry absl_log_internal_globals absl_log_globals absl_vlog_config_internal absl_log_internal_fnmatch absl_raw_hash_set absl_hashtablez_sampler absl_random_distributions absl_random_internal_entropy_pool absl_random_internal_randen absl_random_internal_randen_hwaes absl_random_internal_randen_hwaes_impl absl_random_internal_randen_slow absl_random_internal_platform absl_random_internal_seed_material absl_random_seed_gen_exception absl_random_seed_sequences absl_statusor absl_status absl_strerror absl_str_format_internal absl_strings absl_strings_internal absl_hardening absl_int128 absl_base absl_synchronization absl_stacktrace absl_symbolize absl_debugging_internal absl_demangle_internal absl_demangle_rust absl_decode_rust_punycode absl_utf8_for_code_point absl_tracing_internal absl_time absl_civil_time absl_time_zone)
 target_include_directories(feinstatic_core SYSTEM PRIVATE ${Boost_INCLUDE_DIRS})
 # Compile against the non-deprecated Boost.Asio surface to catch API removals early.
 target_compile_definitions(feinstatic_core PUBLIC BOOST_ASIO_NO_DEPRECATED)
@@ -99,13 +118,18 @@ if(FEINSTATIC_BUILD_TESTS)
     enable_testing()
     add_executable(feinstatic_tests
         tests/test_main.cpp
+        tests/abci_tests.cpp
+        tests/cometbft_integration_tests.cpp
         tests/crypto_tests.cpp
         tests/ledger_tests.cpp
         tests/storage_tests.cpp
         tests/application_tests.cpp
         tests/exchange_tests.cpp
         tests/flow_tests.cpp
+        tests/monetary_tests.cpp
+        tests/staking_tests.cpp
         tests/terminal_tests.cpp
+        tests/utxo_tests.cpp
         tests/platform_tests.cpp
         tests/bridge_tests.cpp
         tests/network_tests.cpp
@@ -125,6 +149,9 @@ if(FEINSTATIC_BUILD_TESTS)
         tests/peer_admission_tests.cpp
         tests/message_dispatch_tests.cpp
         tests/network_integration_tests.cpp
+        tests/network_harness.cpp
+        tests/network_harness_tests.cpp
+        tests/temp_handshake_test.cpp
     )
     target_link_libraries(feinstatic_tests PRIVATE FeinStatic::Core)
     add_dependencies(feinstatic_tests feinstatic)

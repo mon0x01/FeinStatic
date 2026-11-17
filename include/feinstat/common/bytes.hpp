@@ -127,6 +127,7 @@ public:
     }
 
     [[nodiscard]] bool empty() const noexcept { return position_ == data_.size(); }
+    [[nodiscard]] std::size_t position() const noexcept { return position_; }
 
 private:
     void require(std::size_t count) const {

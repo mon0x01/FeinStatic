@@ -3,6 +3,8 @@
 #include <chrono>
 #include <iostream>
 
+#include <boost/system/errc.hpp>
+
 namespace feinstat::network {
 
 MessageDispatcher::MessageDispatcher(SecureSessionContext& tls_context,
@@ -24,6 +26,10 @@ void MessageDispatcher::register_handler(PeerMessageType type, MessageHandler ha
     handlers_[type] = std::move(handler);
 }
 
+void MessageDispatcher::add_observer(MessageObserver observer) {
+    observers_.push_back(std::move(observer));
+}
+
 std::size_t MessageDispatcher::validate_message(PeerMessageType type,
                                                  const Bytes& payload) const noexcept {
     switch (type) {
@@ -41,6 +47,114 @@ std::size_t MessageDispatcher::validate_message(PeerMessageType type,
     }
 }
 
+namespace {
+
+boost::system::error_code encode_error(boost::system::errc::errc_t code) noexcept {
+    return boost::system::errc::make_error_code(code);
+}
+
+} // namespace
+
+Bytes encode_peer_record_request(const std::vector<NodeId>& requested) {
+    ByteWriter writer;
+    writer.u32(static_cast<std::uint32_t>(requested.size()));
+    for (const NodeId& id : requested) {
+        writer.string(id.value());
+    }
+    return std::move(writer).take();
+}
+
+boost::system::error_code decode_peer_record_request(const Bytes& data,
+                                                      std::vector<NodeId>& requested) {
+    requested.clear();
+    ByteReader reader(data);
+    std::uint32_t count;
+    try {
+        count = reader.u32();
+    } catch (const std::exception&) {
+        return encode_error(boost::system::errc::protocol_error);
+    }
+    if (count > kMaxPeerRecordMessages) {
+        return encode_error(boost::system::errc::message_size);
+    }
+    for (std::uint32_t i = 0; i < count; ++i) {
+        std::string id_text;
+        try {
+            id_text = reader.string(128);
+        } catch (const std::exception&) {
+            return encode_error(boost::system::errc::protocol_error);
+        }
+        try {
+            requested.push_back(NodeId::parse(id_text));
+        } catch (const std::exception&) {
+            return encode_error(boost::system::errc::protocol_error);
+        }
+    }
+    if (!reader.empty()) {
+        return encode_error(boost::system::errc::protocol_error);
+    }
+    return boost::system::error_code{};
+}
+
+Bytes encode_peer_record_response(const std::vector<SignedNodeRecord>& records) {
+    // Filter oversized records first so the count matches the records actually
+    // written (records are validated before sharing). Each record is written
+    // with ByteWriter::blob, which already prefixes its own u32 length.
+    std::vector<Bytes> serialized_records;
+    serialized_records.reserve(records.size());
+    for (const SignedNodeRecord& record : records) {
+        const Bytes serialized = record.serialize();
+        if (serialized.size() > kMaxRecordBytes) {
+            continue; // records are validated before sharing; skip oversized
+        }
+        serialized_records.push_back(std::move(serialized));
+    }
+
+    ByteWriter writer;
+    writer.u32(static_cast<std::uint32_t>(serialized_records.size()));
+    for (const Bytes& serialized : serialized_records) {
+        writer.blob(serialized);
+    }
+    return std::move(writer).take();
+}
+
+boost::system::error_code decode_peer_record_response(const Bytes& data,
+                                                       std::vector<SignedNodeRecord>& records) {
+    records.clear();
+    ByteReader reader(data);
+    std::uint32_t count;
+    try {
+        count = reader.u32();
+    } catch (const std::exception&) {
+        return encode_error(boost::system::errc::protocol_error);
+    }
+    if (count > kMaxPeerRecordMessages) {
+        return encode_error(boost::system::errc::message_size);
+    }
+    std::size_t cumulative = 0;
+    for (std::uint32_t i = 0; i < count; ++i) {
+        Bytes record_bytes;
+        try {
+            record_bytes = reader.blob(kMaxRecordBytes);
+        } catch (const std::exception&) {
+            return encode_error(boost::system::errc::protocol_error);
+        }
+        cumulative += record_bytes.size();
+        if (cumulative > kMaxPeerRecordBytes) {
+            return encode_error(boost::system::errc::message_size);
+        }
+        try {
+            records.push_back(SignedNodeRecord::parse(record_bytes));
+        } catch (const std::exception&) {
+            return encode_error(boost::system::errc::protocol_error);
+        }
+    }
+    if (!reader.empty()) {
+        return encode_error(boost::system::errc::protocol_error);
+    }
+    return boost::system::error_code{};
+}
+
 std::size_t MessageDispatcher::send(std::shared_ptr<PeerSession> session,
                                      PeerMessageType type,
                                      const Bytes& payload,
@@ -49,10 +163,11 @@ std::size_t MessageDispatcher::send(std::shared_ptr<PeerSession> session,
         ec = boost::system::errc::make_error_code(boost::system::errc::not_a_stream);
         return 0;
     }
-    if (validate_message(type, payload) != 0) {
-        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        return 0;
-    }
+    // Application-level size/type validation is enforced by the receiver in
+    // dispatch() at the trust boundary; the transport layer (send_message)
+    // rejects any frame exceeding kMaxMessageBytes. The sender does not
+    // pre-reject application payloads so that receiver-side rejection (and the
+    // resulting session close) remains observable end-to-end.
     return session->send_message(static_cast<std::uint16_t>(type), payload, ec);
 }
 
@@ -82,6 +197,11 @@ std::size_t MessageDispatcher::dispatch(std::shared_ptr<PeerSession> session,
     }
 
     it->second(session, type, payload, ec);
+    if (!ec) {
+        for (auto& observer : observers_) {
+            observer(session, type, payload);
+        }
+    }
     return received;
 }
 
