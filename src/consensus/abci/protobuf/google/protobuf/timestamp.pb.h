@@ -10,6 +10,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include "google/protobuf/descriptor.h"
 
 #include "google/protobuf/io/coded_stream.h"
 #include "google/protobuf/arena.h"
