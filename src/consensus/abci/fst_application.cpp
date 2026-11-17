@@ -344,7 +344,7 @@ ResponseFinalizeBlock FstAbciApplication::finalize_block(
 ResponseCommit FstAbciApplication::commit(const RequestCommit& /*request*/) {
     ResponseCommit response;
 
-    response.retain_height = height_;
+    response.retain_height = static_cast<std::int64_t>(height_);
 
     cleanup_mempool();
 

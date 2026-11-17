@@ -91,7 +91,7 @@ apply_tx_via_finalize_block(AbciApplication& app, const ChainId& /*chain_id*/,
                             const Transaction& tx, Height height) {
     RequestFinalizeBlock req;
     req.txs = {encode_tx(tx)};
-    req.height = height;
+    req.height = static_cast<std::int64_t>(height);
     auto resp = app.finalize_block(req);
     return {resp.app_hash, std::move(resp.tx_results)};
 }
@@ -334,8 +334,8 @@ FS_TEST(abci_determinism_multi_block) {
                                                bob_kp.public_key}},
                                          alice_kp.secret_key);
 
-        auto [h1, r1] = apply_tx_via_finalize_block(*app1, chain_id, tx, block);
-        auto [h2, r2] = apply_tx_via_finalize_block(*app2, chain_id, tx, block);
+        auto [h1, r1] = apply_tx_via_finalize_block(*app1, chain_id, tx, static_cast<Height>(block));
+        auto [h2, r2] = apply_tx_via_finalize_block(*app2, chain_id, tx, static_cast<Height>(block));
 
         FS_REQUIRE(h1 == h2);
 
