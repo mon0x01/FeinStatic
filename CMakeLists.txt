@@ -15,6 +15,24 @@ find_package(Boost 1.74 CONFIG REQUIRED)
 find_package(Protobuf REQUIRED)
 find_package(Threads REQUIRED)
 
+# Generate protobuf C++ sources from .proto definitions at build time. This
+# ensures compatibility with the protobuf version installed on the build host
+# (Ubuntu 24.04 provides protobuf 3.21.12; pre-generated sources from a newer
+# protoc would fail with header incompatibilities).
+protobuf_generate(
+    OUT_VAR PROTO_SRCS
+    LANGUAGE cpp
+    PROTOS
+        proto/tendermint/abci/types.proto
+        proto/tendermint/crypto/keys.proto
+        proto/tendermint/crypto/proof.proto
+        proto/tendermint/types/params.proto
+        proto/tendermint/types/validator.proto
+        proto/gogoproto/gogo.proto
+        proto/google/protobuf/timestamp.proto
+    IMPORT_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/proto
+)
+
 # CMake 4.x renamed the imported target; retain compatibility with CMake 3.25+.
 if(TARGET SQLite3::SQLite3)
     set(FEINSTATIC_SQLITE_TARGET SQLite3::SQLite3)
@@ -56,13 +74,7 @@ add_library(feinstatic_core
     src/consensus/abci/abci_codec.cpp
     src/consensus/abci/abci_socket_server.cpp
     src/consensus/abci/fst_application.cpp
-    src/consensus/abci/protobuf/gogoproto/gogo.pb.cc
-    src/consensus/abci/protobuf/tendermint/crypto/keys.pb.cc
-    src/consensus/abci/protobuf/tendermint/types/params.pb.cc
-    src/consensus/abci/protobuf/tendermint/crypto/proof.pb.cc
-    src/consensus/abci/protobuf/google/protobuf/timestamp.pb.cc
-    src/consensus/abci/protobuf/tendermint/abci/types.pb.cc
-    src/consensus/abci/protobuf/tendermint/types/validator.pb.cc
+    ${PROTO_SRCS}
     src/staking/state.cpp
     src/utxo/encoding.cpp
     src/utxo/validation.cpp
@@ -78,7 +90,8 @@ add_library(FeinStatic::Core ALIAS feinstatic_core)
 
 target_include_directories(feinstatic_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/consensus/abci/protobuf>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/proto>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
     ${Protobuf_INCLUDE_DIRS}
 )
 target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto OpenSSL::SSL ${FEINSTATIC_SQLITE_TARGET} Threads::Threads protobuf absl_base absl_cord absl_cord_internal absl_cordz_functions absl_cordz_handle absl_cordz_info absl_crc32c absl_crc_cord_state absl_crc_internal absl_base_cpu_detect absl_leak_check absl_log_internal_check_op absl_log_internal_conditions absl_log_internal_format absl_log_internal_message absl_log_internal_nullguard absl_log_internal_proto absl_log_internal_structured_proto absl_log_severity absl_log_sink absl_log_entry absl_log_internal_globals absl_log_globals absl_vlog_config_internal absl_log_internal_fnmatch absl_raw_hash_set absl_hashtablez_sampler absl_random_distributions absl_random_internal_entropy_pool absl_random_internal_randen absl_random_internal_randen_hwaes absl_random_internal_randen_hwaes_impl absl_random_internal_randen_slow absl_random_internal_platform absl_random_internal_seed_material absl_random_seed_gen_exception absl_random_seed_sequences absl_statusor absl_status absl_strerror absl_str_format_internal absl_strings absl_strings_internal absl_hardening absl_int128 absl_base absl_synchronization absl_stacktrace absl_symbolize absl_debugging_internal absl_demangle_internal absl_demangle_rust absl_decode_rust_punycode absl_utf8_for_code_point absl_tracing_internal absl_time absl_civil_time absl_time_zone)
