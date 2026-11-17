@@ -89,8 +89,9 @@ public:
     [[nodiscard]] std::uint16_t listen_port() const noexcept { return listen_port_; }
 
     // Access the runtime configuration (needed for re-initialization/restart
-    // scenarios and tests).
-    [[nodiscard]] NetworkRuntimeConfig config() const {
+    // scenarios and tests). Returns a mutable reference so that callers can
+    // adjust fields such as bootstrap_seed_records before initialize().
+    [[nodiscard]] NetworkRuntimeConfig& config() noexcept {
         std::lock_guard<std::mutex> lock(config_mutex_);
         return config_;
     }

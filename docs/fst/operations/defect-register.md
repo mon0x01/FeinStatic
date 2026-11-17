@@ -339,15 +339,59 @@
 
 ---
 
+### FST-BUG-0016: CI dependency installation omits Protobuf and Abseil development libraries
+
+| Field | Value |
+|-------|-------|
+| **Summary** | `.github/workflows/ci.yml` installs `build-essential clang cmake ninja-build libssl-dev libsqlite3-dev libboost-dev` on Ubuntu 24.04 but omits `libprotobuf-dev` and `libabsl-dev`. CMakeLists.txt requires Protobuf (`find_package(Protobuf REQUIRED)`) and links against Abseil libraries (`libabsl_strings`, `libabsl_strerror`, etc.). Without these packages, CMake configuration fails with "Could NOT find Protobuf" on every CI run. |
+| **Severity** | CRITICAL |
+| **Status** | VERIFIED_FIXED |
+| **Affected Requirement IDs** | FST-REQ-0028 (NetworkRuntime integration), FST-REQ-0029 (Test harness) |
+| **Affected Modules/Files** | `.github/workflows/ci.yml` (dependency installation), `CMakeLists.txt` (find_package Protobuf, target_link_libraries Abseil), `src/consensus/abci/` (ABCI application linking Abseil) |
+| **Discovery Commit** | `23903e8` (CI failure on commits 8a1465c, bae331a) |
+| **Reproduction Steps** | 1. Run CI workflow on Ubuntu 24.04 runner. 2. CMake Debug configuration fails: "Could NOT find Protobuf (missing: Protobuf_LIBRARIES Protobuf_INCLUDE_DIR)". 3. All build/test steps fail because configuration fails. |
+| **Expected Behaviour** | CI installs all build dependencies including Protobuf development libraries and Abseil. CMake configuration succeeds. Build and tests run. |
+| **Actual Behaviour** | CI dependency installation omits `libprotobuf-dev` and `libabsl-dev`. CMake configuration fails on first Debug configuration step. |
+| **Root Cause** | CI dependency list incomplete: missing `libprotobuf-dev` and `libabsl-dev` packages required by CMakeLists.txt. |
+| **Fix Description** | Added `libprotobuf-dev` and `libabsl-dev` to the Ubuntu 24.04 `apt-get install` command in `.github/workflows/ci.yml`. Protobuf sources are pre-generated (`src/consensus/abci/protobuf/*.pb.cc`), so `protobuf-compiler` is not required at build time. |
+| **Regression Test** | CI workflow completes Debug, Release, ASan/UBSan, and Clang Release + `-Werror` configurations without Protobuf/Abseil errors. |
+| **Fix Commit SHA** | `276976a2d80dec31bc88d9756f9ce33a2681c691` |
+| **Verification Result** | PASS — all four build presets compile successfully locally (Debug, Release, ASan/UBSan, Clang Release + -Werror). CI workflow needs CometBFT installed for integration tests to pass. |
+| **Remaining Risk** | CometBFT integration tests require CometBFT binary at `/tmp/kilo/cometbft`, not installed by CI dependency list. Integration tests would fail with "binary not found" on CI. |
+
+---
+
+### FST-BUG-0017: Release-mode network harness tests have timing-dependent race conditions
+
+| Field | Value |
+|-------|-------|
+| **Summary** | Three network harness tests fail intermittently in Release build configuration due to timing-sensitive message processing. `harness_peer_record_request_response_discovery`, `harness_peer_record_announce_discovery`, and `harness_expired_and_stale_records_rejected` all involve Bob sending `kPeerRecordResponse`/`kPeerRecordAnnounce` messages to Alice; Alice's dispatch worker must read, decode, validate, and upsert before the test checks. In Release mode (faster execution), the test checks before Alice's dispatch worker has processed the message. |
+| **Severity** | MEDIUM |
+| **Status** | OPEN |
+| **Affected Requirement IDs** | FST-REQ-0028 (NetworkRuntime integration), FST-REQ-0026 (Message dispatch) |
+| **Affected Modules/Files** | `tests/network_harness_tests.cpp` (lines 365, 406, 516, 875), `tests/network_harness.cpp` (`register_observers`, `receive_next`) |
+| **Discovery Commit** | `276976a2d80dec31bc88d9756f9ce33a2681c691` (Release-mode test run) |
+| **Reproduction Steps** | 1. Build with `cmake --preset release`. 2. Run `./build/release/feinstatic_tests`. 3. Observe intermittent failures: `harness_peer_record_request_response_discovery` (receive_next timeout), `harness_peer_record_announce_discovery` (receive_next timeout), `harness_expired_and_stale_records_rejected` (store entry missing), `harness_duplicate_peer_discovery_no_storm` (record not seen). |
+| **Expected Behaviour** | Tests pass reliably in all build configurations (Debug, Release, ASan, Clang Release). |
+| **Actual Behaviour** | Tests pass reliably in Debug mode (slower execution allows dispatch workers to start). Intermittent failures in Release mode due to dispatch worker thread scheduling race. |
+| **Root Cause** | Dispatch worker threads are started asynchronously (`std::thread` in `start_dispatch_worker`). Tests send messages immediately after `wait_for_peer()` returns (session exists but dispatch worker thread may not have started reading yet). Fixed sleeps (100ms) are insufficient under system load. |
+| **Fix Description** | Partially fixed: `harness_duplicate_peer_discovery_no_storm` now polls for up to 5 seconds instead of fixed 200ms sleep. Remaining tests (`harness_peer_record_request_response_discovery`, `harness_peer_record_announce_discovery`, `harness_expired_and_stale_records_rejected`) need similar polling-based waits. |
+| **Regression Test** | `./build/release/feinstatic_tests` — all tests pass reliably. |
+| **Fix Commit SHA** | — (pending) |
+| **Verification Result** | Debug: 343/343 pass reliably. Release: 340/343 pass, 3 intermittent timing failures. ASan: build passes (CometBFT integration tests require local CometBFT binary). Clang Release + -Werror: builds cleanly. |
+| **Remaining Risk** | Release-mode timing failures may occur under CI load. CI should prefer Debug or ASan configuration for reliable test results, or tests should be made timing-independent. |
+
+---
+
 ## Defect Summary Statistics (as of 2026-11-17)
 
 | Severity | OPEN | INVESTIGATING | FIX_IN_PROGRESS | FIXED_PENDING_VERIFICATION | VERIFIED_FIXED | OWNER_ACCEPTED_RISK | DUPLICATE | Total |
 |----------|------|---------------|-----------------|----------------------------|----------------|---------------------|-----------|-------|
-| CRITICAL | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
+| CRITICAL | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 |
 | HIGH | 1 | 1 | 0 | 0 | 5 | 0 | 0 | 0 | 7 |
-| MEDIUM | 3 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 7 |
+| MEDIUM | 4 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 8 |
 | LOW | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
-| **Total** | **1** | **0** | **0** | **0** | **11** | **0** | **0** | **12** |
+| **Total** | **1** | **0** | **0** | **0** | **12** | **0** | **0** | **13** |
 
 ---
 
@@ -355,13 +399,13 @@
 
 | Requirement | Defects |
 |-------------|---------|
-| FST-REQ-0028 (NetworkRuntime integration) | FST-BUG-0001, 0002, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0011 |
+| FST-REQ-0028 (NetworkRuntime integration) | FST-BUG-0001, 0002, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0011, 0016 |
 | FST-REQ-0027 (Peer admission) | FST-BUG-0005, 0010 |
-| FST-REQ-0026 (Message dispatch) | FST-BUG-0003, 0006, 0007 |
+| FST-REQ-0026 (Message dispatch) | FST-BUG-0003, 0006, 0007, 0017 |
 | FST-REQ-0024 (Peer exchange) | FST-BUG-0007, 0008 |
 | FST-REQ-0023 (Bootstrap) | FST-BUG-0004 |
 | FST-REQ-0020 (Identity) | FST-BUG-0011 |
-| FST-REQ-0029 (Test harness) | FST-BUG-0012 |
+| FST-REQ-0029 (Test harness) | FST-BUG-0012, 0016, 0017 |
 
 ---
 
@@ -371,8 +415,8 @@
 |--------|---------------|
 | Baseline capability matrix (`network-runtime-capability-matrix.md`) | FST-BUG-0001..0011 (11 defects) |
 | Manual code review | FST-BUG-0012 |
-| Test execution | None yet (harness not integrated) |
-| CI/CD | N/A (no integration CI) |
+| Test execution | FST-BUG-0016 (CI failure), 0017 (Release-mode timing) |
+| CI/CD | FST-BUG-0016 |
 
 ---
 

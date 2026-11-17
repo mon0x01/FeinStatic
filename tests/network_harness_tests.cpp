@@ -861,9 +861,18 @@ FS_TEST(harness_duplicate_peer_discovery_no_storm) {
 
     ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    FS_REQUIRE(alice.runtime().store().get(carol.node_id()).has_value());
+    // Wait for Carol's record to be ingested via peer exchange. The dispatch
+    // worker needs time to read, decode, validate, and upsert the record.
+    bool record_seen = false;
+    for (int i = 0; i < 50; ++i) {
+        if (alice.runtime().store().get(carol.node_id()).has_value()) {
+            record_seen = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    FS_REQUIRE(record_seen);
     // Only one connection to Carol (duplicate discovery does not storm).
     FS_REQUIRE(alice.runtime().admission().connection_count() == 1);
 
