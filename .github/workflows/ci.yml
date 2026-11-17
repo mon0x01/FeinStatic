@@ -21,5 +21,22 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake ninja-build libssl-dev libsqlite3-dev libboost-dev libprotobuf-dev libabsl-dev
 
+      - name: Install compatible protobuf (36.2)
+        run: |
+          # Pre-generated protobuf sources require protobuf 3.25+ (runtime_version.h).
+          # Ubuntu 24.04 provides protobuf 3.21.12 which is incompatible.
+          # Build and install protobuf 36.2 from source to /usr/local.
+          cd /tmp
+          curl -sL -o protobuf.tar.gz -L "https://github.com/protocolbuffers/protobuf/archive/refs/tags/v36.2.tar.gz"
+          tar xzf protobuf.tar.gz
+          cd protobuf-36.2
+          cmake -S cmake -B build -DCMAKE_BUILD_TYPE=Release \
+            -Dprotobuf_BUILD_TESTS=OFF \
+            -Dprotobuf_BUILD_EXAMPLES=OFF \
+            -Dprotobuf_BUILD_PROTOC_BINARIES=ON
+          cmake --build build -j$(nproc) --target protoc protobuf
+          sudo cmake --install build --prefix /usr/local
+          sudo ldconfig
+
       - name: Run complete verification matrix
         run: ./scripts/verify-all.sh
