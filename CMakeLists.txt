@@ -94,7 +94,21 @@ target_include_directories(feinstatic_core PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
     ${Protobuf_INCLUDE_DIRS}
 )
-target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto OpenSSL::SSL ${FEINSTATIC_SQLITE_TARGET} Threads::Threads protobuf absl_base absl_cord absl_cord_internal absl_cordz_functions absl_cordz_handle absl_cordz_info absl_crc32c absl_crc_cord_state absl_crc_internal absl_base_cpu_detect absl_leak_check absl_log_internal_check_op absl_log_internal_conditions absl_log_internal_format absl_log_internal_message absl_log_internal_nullguard absl_log_internal_proto absl_log_internal_structured_proto absl_log_severity absl_log_sink absl_log_entry absl_log_internal_globals absl_log_globals absl_vlog_config_internal absl_log_internal_fnmatch absl_raw_hash_set absl_hashtablez_sampler absl_random_distributions absl_random_internal_entropy_pool absl_random_internal_randen absl_random_internal_randen_hwaes absl_random_internal_randen_hwaes_impl absl_random_internal_randen_slow absl_random_internal_platform absl_random_internal_seed_material absl_random_seed_gen_exception absl_random_seed_sequences absl_statusor absl_status absl_strerror absl_str_format_internal absl_strings absl_strings_internal absl_hardening absl_int128 absl_base absl_synchronization absl_stacktrace absl_symbolize absl_debugging_internal absl_demangle_internal absl_demangle_rust absl_decode_rust_punycode absl_utf8_for_code_point absl_tracing_internal absl_time absl_civil_time absl_time_zone)
+target_link_libraries(feinstatic_core PUBLIC OpenSSL::Crypto OpenSSL::SSL ${FEINSTATIC_SQLITE_TARGET} Threads::Threads protobuf absl_strings absl_strerror absl_base absl_synchronization absl_stacktrace absl_symbolize absl_time absl_civil_time absl_time_zone)
+
+# Link against all available Abseil shared libraries on the build host.
+# Ubuntu 24.04's libabsl-dev provides a subset of Abseil libraries; globbing
+# ensures we link against whatever is available without hardcoding names.
+file(GLOB ABSL_LIBS "/usr/lib/libabsl*.so" "/usr/lib/x86_64-linux-gnu/libabsl*.so")
+foreach(ABSL_LIB ${ABSL_LIBS})
+    get_filename_component(ABSL_NAME ${ABSL_LIB} NAME_WE)
+    string(REGEX REPLACE "^lib" "" ABSL_NAME ${ABSL_NAME})
+    list(APPEND ABSL_LIB_NAMES ${ABSL_NAME})
+endforeach()
+if(ABSL_LIB_NAMES)
+    list(REMOVE_DUPLICATES ABSL_LIB_NAMES)
+    target_link_libraries(feinstatic_core PUBLIC ${ABSL_LIB_NAMES})
+endif()
 target_include_directories(feinstatic_core SYSTEM PRIVATE ${Boost_INCLUDE_DIRS})
 # Compile against the non-deprecated Boost.Asio surface to catch API removals early.
 target_compile_definitions(feinstatic_core PUBLIC BOOST_ASIO_NO_DEPRECATED)
