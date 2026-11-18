@@ -3,6 +3,7 @@
 #include "feinstat/staking/types.hpp"
 
 #include <map>
+#include <set>
 #include <vector>
 
 namespace feinstat::staking {
@@ -11,6 +12,17 @@ namespace feinstat::staking {
 // the prior state and the supplied inputs/height (no wall clock, no unordered
 // iteration, no floating point). Bonded stake and voting power are derived
 // deterministically so every correct node computes an identical validator set.
+//
+// Implements FST-REQ-0037 validator entry & exit (ADR-0003 / D-016): epoch
+// transitions with inactivity leak and epoch-based committee rotation, plus
+// an evidence-based slashing flow (submit -> verify -> slash). Slashing is
+// evidence-based only: provable protocol violations (equivocation) produce
+// verifiable evidence that triggers deterministic slashing of bonded stake.
+// References:
+// - V. Buterin and V. Griffith, "Casper the Friendly Finality Gadget",
+//   arXiv:1710.09437, 2017 (slashing, nothing-at-stake, inactivity leak).
+// - docs/fst/adr/adr-0003-permissionless-pos-validator-eligibility.md (ADR-0003).
+// - docs/fst/adr/adr-0004-bft-consensus-cometbft-integration.md (ADR-0004).
 class StakingState {
 public:
     StakingState() = default;
@@ -63,9 +75,41 @@ public:
     std::vector<ValidatorUpdate> validator_updates(
         Height current_height) const;
 
+    // Record validator activity (vote, bond, or other participation) at a
+    // height. Updates last_active_height for inactivity-leak accounting.
+    void record_activity(const OperatorKey& operator_key,
+                         Height current_height);
+
+    // Current epoch for a chain height: current_epoch = height / epoch_length.
+    [[nodiscard]] Height current_epoch(Height current_height) const noexcept;
+
+    // Epoch bookkeeping: current epoch, epoch length, height of the last
+    // applied epoch transition.
+    [[nodiscard]] EpochInfo epoch_info(Height current_height) const noexcept;
+
+    // Advance the epoch if current_height begins a new epoch: applies the
+    // inactivity leak to inactive bonded validators and rotates the active
+    // committee (recomputed from bonded stake at the epoch boundary).
+    [[nodiscard]] EpochInfo transition_epoch(Height current_height);
+
+    // Submit and verify slashing evidence (evidence-based slashing only,
+    // ADR-0003). Validates the evidence, rejects duplicate submissions,
+    // verifies the validator's cryptographic signatures over the conflicting
+    // votes, and slashes the equivocating validator by
+    // equivocation_slash_basis_points of bonded stake. Throws StakeError for
+    // invalid or duplicate evidence.
+    [[nodiscard]] SlashingOutcome submit_slashing_evidence(
+        const SlashingEvidence& evidence, Height current_height);
+
+    // Slashing events applied to validators (observability only).
+    [[nodiscard]] const std::vector<SlashingEvent>& slashing_events() const
+        noexcept { return slashing_events_; }
+
     // Accessors.
     [[nodiscard]] const std::map<OperatorKey, Validator>& validators() const
         noexcept { return validators_; }
+    [[nodiscard]] Validator* validator(
+        const OperatorKey& operator_key) noexcept;
     [[nodiscard]] const Validator* validator(
         const OperatorKey& operator_key) const noexcept;
     [[nodiscard]] const Validator* validator_by_consensus(
@@ -100,6 +144,16 @@ private:
     Amount total_bonded_stake_{0};
     Amount reward_pool_{0};
     Height current_height_{0};
+
+    // Epoch bookkeeping: last epoch for which transition_epoch() was applied.
+    Height last_epoch_{0};
+    // Height of the last applied epoch transition.
+    Height last_transition_height_{0};
+    // Canonical hashes of slashing evidence already submitted (rejects
+    // duplicate submissions so a validator is slashed once per evidence).
+    std::set<feinstat::Hash> submitted_evidence_;
+    // Slashing events applied to validators (observability only).
+    std::vector<SlashingEvent> slashing_events_;
 };
 
 } // namespace feinstat::staking
