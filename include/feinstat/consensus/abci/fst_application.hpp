@@ -1,6 +1,7 @@
 #pragma once
 
 #include "feinstat/consensus/abci/application.hpp"
+#include "feinstat/consensus/fork_choice.hpp"
 #include "feinstat/monetary/engine.hpp"
 #include "feinstat/staking/state.hpp"
 #include "feinstat/utxo/mempool.hpp"
@@ -27,6 +28,13 @@ inline constexpr std::size_t kMaxBlockBytes = 1'000'000ULL;
 // - app_hash is returned from FinalizeBlock, not Commit.
 // - InsertTx/ReapTxs support application-managed mempool.
 // - Validator updates use activation-height semantics (H -> H+2).
+//
+// Finality (CometBFT-aligned, per ADR-0004/D-017): CometBFT provides
+// deterministic BFT finality as the consensus engine. The FST application
+// tracks which heights CometBFT has finalized (FinalityChecker), detects
+// forks (stale or conflicting blocks at/below the finalized height), and
+// supports fork recovery at the application level. The application does NOT
+// implement a BFT consensus algorithm — that is CometBFT's responsibility.
 class FstAbciApplication : public AbciApplication {
 public:
     FstAbciApplication(ChainId chain_id,
@@ -86,6 +94,15 @@ public:
 
     [[nodiscard]] staking::Height height() const noexcept override;
 
+    // --- Finality (CometBFT-aligned) -------------------------------------
+
+    // Height of the most recent block finalized by a CometBFT commit (0 if
+    // no commit has been recorded).
+    [[nodiscard]] std::uint64_t finalized_height() const noexcept;
+
+    // Finality status of `height` relative to the finalized checkpoint.
+    [[nodiscard]] FinalityStatus finality_status(std::uint64_t height) const noexcept;
+
 private:
     ChainId chain_id_;
     staking::Height height_{0};
@@ -95,9 +112,17 @@ private:
     monetary::MonetaryEngine monetary_engine_;
     Mempool mempool_{10'000, 50'000'000ULL};
 
+    // CometBFT-aligned finality tracker: records which heights CometBFT has
+    // finalized and detects application-level forks.
+    FinalityChecker finality_checker_;
+
     // Base fee carried over from the previous block (for congestion
     // adjustment). Testnet-labelled initial value.
     Amount prev_base_fee_{1'000ULL};
+
+    // App hash of the last finalized block, carried from finalize_block() to
+    // commit() so the finality checkpoint can be recorded at commit time.
+    Hash last_app_hash_{};
 
     // State accumulated during the current block (cleared at commit).
     std::vector<Transaction> delivered_txs_;

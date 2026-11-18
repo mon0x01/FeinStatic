@@ -47,4 +47,54 @@ ChainComparison DeterministicForkChoice::compare(const ledger::Chain& current,
             common_height, false};
 }
 
+bool FinalityChecker::record_commit(std::uint64_t height, const Hash& app_hash) {
+    if (!initialized_) {
+        // First commit observed: initialize the finalized checkpoint.
+        finalized_height_ = height;
+        finalized_app_hash_ = app_hash;
+        initialized_ = true;
+        return true;
+    }
+    if (height > finalized_height_) {
+        // Chain extension: advance the finalized checkpoint.
+        finalized_height_ = height;
+        finalized_app_hash_ = app_hash;
+        return true;
+    }
+    if (height == finalized_height_ && finalized_app_hash_ == app_hash) {
+        // Idempotent re-commit at the finalized tip: not a fork.
+        return true;
+    }
+    // Fork detected: a conflicting or stale block at or below the finalized
+    // height. Do not advance the checkpoint; the caller should treat this as
+    // a fork and initiate recovery.
+    return false;
+}
+
+FinalityStatus FinalityChecker::finality_status(std::uint64_t height) const noexcept {
+    if (!initialized_) {
+        return FinalityStatus::NotFinalized;
+    }
+    if (height == finalized_height_) {
+        return FinalityStatus::Finalized;
+    }
+    if (height < finalized_height_) {
+        return FinalityStatus::ForkDetected;
+    }
+    return FinalityStatus::NotFinalized;
+}
+
+bool FinalityChecker::would_fork(std::uint64_t height) const noexcept {
+    if (!initialized_) {
+        return false;
+    }
+    return height < finalized_height_;
+}
+
+void FinalityChecker::reset() noexcept {
+    finalized_height_ = 0;
+    finalized_app_hash_ = Hash{};
+    initialized_ = false;
+}
+
 } // namespace feinstat::consensus
