@@ -43,11 +43,16 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 | Source branch | Commit SHA | From agent | Intended target | Status | Received at |
 |---------------|------------|------------|-----------------|--------|-------------|
 | team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T19:31:45Z |
+| team/implementation | c573ef99dc2351972d447842d1bfcc93668caefa | fst-implementation | team/integration | RECEIVED | 2026-11-18T19:52:00Z |
+| team/verification | 2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e | fst-verification | team/integration | RECEIVED | 2026-11-18T19:55:00Z |
 
 ## Integration and review status
 - Last integrated commit: `a89ccd8` (merge commit merging `bdb07fd` fst-debugging FST-BUG-0014/0015 fix into `team/integration`; HEAD advances from `4c5e088` → `a89ccd8`)
 - Last review: `bdb07fd` — Verification Agent gate PASSED; integrated via merge commit `a89ccd8`
 - Pending review: none
+- Pending handoffs (documentation-only ledger reconciliations, no source to merge into team/integration):
+  - `c573ef99dc2351972d447842d1bfcc93668caefa` (fst-implementation, team/implementation) — FST-REQ-0036..0044 audit + implementation-status.md reconciliation. RECEIVED; no build gate required (docs-only); no source to integrate.
+  - `2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e` (fst-verification, detached at 0773794) — verification gate evidence for commit `077379458ed1847d704af89a7a5ae5520cfee42d`. RECEIVED; gate PASSED (see evidence below); no source to integrate.
 
 ## Verification Gate Evidence — Commit bdb07fd
 
@@ -64,6 +69,21 @@ Change: `src/network/peer_admission.cpp` — `AdmissionController::stop()` joins
 
 Gate evaluation (all required): all 5 presets build exit 0 = YES; TSan harness 29/29 pass = YES; TSan zero socket race reports = YES; Debug full suite 343/343 pass = YES. **Overall gate: PASSES.** No new regressions introduced by bdb07fd.
 
+## Verification Gate Evidence — Commit 0773794 (FST-BUG-0013/0014/0015 re-verification)
+
+Exact commit SHA tested: `077379458ed1847d704af89a7a5ae5520cfee42d` (team/debugging HEAD, checked out detached in `team/verification`)
+Change vs `bdb07fd`: docs-only (`defect-register.md`); all source identical to `bdb07fd`.
+
+| Preset | Configure exit | Build exit | Test command | Tests exit | Test result | Log files |
+|--------|---------------|------------|--------------|------------|-------------|-----------|
+| debug | 0 | 0 | `timeout 600 ./build/debug/feinstatic_tests` | 0 | 343 passed, 0 failed, 343 registered | /tmp/kilo/verify-0773794-debug-{configure,build,tests}.log |
+| tsan | 0 | 0 | `timeout 120 ./build/tsan/feinstatic_tests temp_handshake_live_test` | 0 | PASS, server_ec=Success client_ec=Success, 0 TSan warnings | /tmp/kilo/verify-0773794-tsan-temp_handshake.log |
+| tsan | 0 | 0 | `timeout 300 ./build/tsan/feinstatic_tests harness_` | 0 | 29 passed, 0 failed, 29 selected, 0 socket race reports | /tmp/kilo/verify-0773794-tsan-harness.log |
+| asan | 0 | 0 | `timeout 120 ./build/asan/feinstatic_tests cometbft_single_node_genesis_and_commit` | 1 | SEGV at abci_codec.cpp:674 (VDEF-001 reproduced) | /tmp/kilo/verify-0773794-asan-cometbft-single.log |
+| tsan | 0 | 0 | `timeout 120 ./build/tsan/feinstatic_tests cometbft_single_node_genesis_and_commit` | 66 | 1 TSan race at abci_socket_server.cpp:273 (VDEF-002 reproduced) | /tmp/kilo/verify-0773794-tsan-cometbft-single.log |
+
+Gate evaluation: FST-BUG-0013/0014/0015 fixes verified at 0773794 = PASS (debug 343/343; tsan handshake pass/0 NodeId races; tsan harness 29/29/0 socket races). All presets build exit 0 = YES. No new regressions from 0773794 (docs-only vs bdb07fd). VDEF-001/VDEF-002 reproduced (pre-existing src/consensus/abci defects, outside this fix's scope). **Overall gate: PASSES.**
+
 ## Build and verification gates
 - Build presets: `debug`, `release`, `asan`, `clang-release`, `tsan` (CMakePresets.json)
 - Build gate: all five presets must compile with exit code 0; debug suite 343/343 PASS
@@ -74,12 +94,13 @@ Gate evaluation (all required): all 5 presets build exit 0 = YES; TSan harness 2
 - `6f8fa522adae39a7909bf7a426563b1bc77867dc` — prior integration baseline (accepted as starting point)
 - `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` — orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of `6f8fa522`
 - `bdb07fd482fc2094487fa1407f33e1397973dc99` — accepted and integrated (fst-debugging FST-BUG-0014/0015 fix; Verification Gate PASSED; merged via merge commit `a89ccd8`)
-
 ## Outstanding blockers
+
 - (none for Phases 3–4 — unblocked by owner decisions D-015/D-016/D-017/D-037 APPROVED via ADR-0002/0003/0004/0005)
-- VDEF-2026-11-18-001: ASan SEGV in ABCI framing (`src/consensus/abci/abci_codec.cpp:674`, read_framed_message → protobuf MergeFromImpl), HIGH, reported by fst-verification at SHA `6f8fa52` (preset asan, exit 1, log /tmp/kilo/verify-asan-tests.log). Required action: fst-debugging to register as FST-BUG-XXXX and fix. Reservation conflict: `src/consensus/abci/*` reserved for fst-implementation IT-01 (IN_PROGRESS); `abci_codec.cpp` and `abci_socket_server.cpp` reassigned to fst-debugging for this fix.
-- VDEF-2026-11-18-002: TSan data races in `src/consensus/abci/abci_socket_server.cpp:270/:273` (AbciSocketServer stop()/run() racing run() thread), MEDIUM, reported by fst-verification at SHA `6f8fa52` (preset tsan, exit 66, log /tmp/kilo/verify-tsan-tests.log). Required action: fst-debugging to register as FST-BUG-XXXX and fix. Same reservation conflict as VDEF-001.
+- VDEF-2026-11-18-001 → registered in defect-register.md by fst-debugging: ASan SEGV in ABCI framing (`src/consensus/abci/abci_codec.cpp:674`, read_framed_message → protobuf MergeFromImpl), HIGH, reproduced at SHA `0773794` (preset asan, exit 1, log /tmp/kilo/verify-0773794-asan-cometbft-single.log). Required action: fst-debugging to fix (Phase 4, not yet authorized). Reservation: `src/consensus/abci/abci_codec.cpp` assigned to fst-debugging (no conflict — IT-01 is QUEUED, not active).
+- VDEF-2026-11-18-002 → registered in defect-register.md by fst-debugging: TSan data races in `src/consensus/abci/abci_socket_server.cpp:270/:273/:274` (AbciSocketServer stop()/run() racing run() thread), MEDIUM, reproduced at SHA `0773794` (preset tsan, exit 66, log /tmp/kilo/verify-0773794-tsan-cometbft-single.log). Required action: fst-debugging to fix (Phase 4, not yet authorized). Reservation: `src/consensus/abci/abci_socket_server.cpp` assigned to fst-debugging (no conflict — IT-01 is QUEUED, not active).
 - FST-BUG-0017 (Release-mode timing failures) remains OPEN and DEFERRED to Phase 4.
+- Cross-cutting architectural finding (from fst-implementation audit at c573ef9): Integrated consensus is FeinStatic Raft (crash-fault, D-024 PROVISIONAL) but ADR-0004/D-017 selected CometBFT (BFT). FST-REQ-0036 (BFT finality) cannot be satisfied by Raft. Owner confirmation may be needed before implementing FST-REQ-0036.
 
 ## Git synchronization protocol (ledger + accepted-commit propagation)
 
