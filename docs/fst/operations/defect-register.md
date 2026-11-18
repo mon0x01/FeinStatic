@@ -374,12 +374,51 @@
 | **Reproduction Steps** | 1. Build with `cmake --preset release`. 2. Run `./build/release/feinstatic_tests`. 3. Observe intermittent failures: `harness_peer_record_request_response_discovery` (receive_next timeout), `harness_peer_record_announce_discovery` (receive_next timeout), `harness_expired_and_stale_records_rejected` (store entry missing), `harness_duplicate_peer_discovery_no_storm` (record not seen). |
 | **Expected Behaviour** | Tests pass reliably in all build configurations (Debug, Release, ASan, Clang Release). |
 | **Actual Behaviour** | Tests pass reliably in Debug mode (slower execution allows dispatch workers to start). Intermittent failures in Release mode due to dispatch worker thread scheduling race. |
-| **Root Cause** | Dispatch worker threads are started asynchronously (`std::thread` in `start_dispatch_worker`). Tests send messages immediately after `wait_for_peer()` returns (session exists but dispatch worker thread may not have started reading yet). Fixed sleeps (100ms) are insufficient under system load. |
-| **Fix Description** | Partially fixed: `harness_duplicate_peer_discovery_no_storm` now polls for up to 5 seconds instead of fixed 200ms sleep. Remaining tests (`harness_peer_record_request_response_discovery`, `harness_peer_record_announce_discovery`, `harness_expired_and_stale_records_rejected`) need similar polling-based waits. |
+| **Root Cause** | Two-phase cause. (1) Timing: dispatch worker threads are started asynchronously
+(`start_dispatch_worker` spawns a `std::thread`); tests previously sent messages
+immediately after `wait_for_peer()` returned, before the worker thread had entered
+its blocking read loop. Fixed sleeps were insufficient under load. (2) SSL
+concurrency (unresolved): `NodeFixture::send` is invoked from the test caller
+thread and performs a blocking `boost::asio::write` on the session's `ssl_stream_`
+while that session's dispatch worker thread concurrently blocks on
+`boost::asio::read` of the SAME `ssl_stream_` (`run_dispatch_worker` →
+`dispatcher_->dispatch` → `SecureSession::receive_message`). OpenSSL SSL streams
+are not safe for concurrent read/write from two threads. In Release mode this race
+drops or corrupts frames, causing `receive_next` timeouts (e.g.
+`harness_peer_record_request_response_discovery`) and, when the full suite runs, a
+hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
+| **Fix Description** | Test-side: replaced fixed sleeps / timed store-polls with message-based
+synchronization in `tests/network_harness_tests.cpp`: a ping/pong exchange
+confirms both dispatch workers are actively reading before peer-record delivery,
+and each test `receive_next`s the actual `kPong`/`kPeerRecordResponse`/
+`kPeerRecordAnnounce` message (the handler persists before the observer is
+notified, per `message_dispatch.hpp:54-57`), so receiving it proves the store was
+updated. Applied to `harness_peer_record_request_response_discovery`,
+`harness_peer_record_announce_discovery`, `harness_invalid_signed_record_rejected`,
+`harness_wrong_network_record_rejected`, `harness_expired_and_stale_records_rejected`,
+`harness_malformed_messages_do_not_crash_peers`, `harness_duplicate_peer_discovery_no_storm`.
+The residual Release-mode failures and the full-suite hang are caused by the
+SSL concurrency race above and are NOT fixed by test-side synchronization. They
+are tracked as resolved only by the planned asynchronous TLS I/O redesign
+(strand-bound all SSL stream operations, write queue, graceful shutdown) — see
+the async TLS I/O design plan. No test-side fix can make concurrent read/write on
+one SSL stream safe. |
 | **Regression Test** | `./build/release/feinstatic_tests` — all tests pass reliably. |
 | **Fix Commit SHA** | — (pending) |
-| **Verification Result** | Debug: 343/343 pass reliably. Release: 340/343 pass, 3 intermittent timing failures. ASan: build passes (CometBFT integration tests require local CometBFT binary). Clang Release + -Werror: builds cleanly. |
-| **Remaining Risk** | Release-mode timing failures may occur under CI load. CI should prefer Debug or ASan configuration for reliable test results, or tests should be made timing-independent. |
+| **Verification Result** | Debug: 29/29 harness tests pass reliably across 3 consecutive runs; full Debug
+suite 343/343 passes. Release: build succeeds; `harness_peer_record_request_response_discovery`
+fails intermittently (4/5 runs timed out at line 375 awaiting `kPeerRecordResponse`);
+running the full Release harness suite hangs (SSL stream deadlock between test
+caller-thread write and dispatch-worker-thread read). ASan: build passes (CometBFT
+integration tests require local CometBFT binary). Clang Release + -Werror: builds
+cleanly. The test-side synchronization itself is correct (Debug reliable); the
+Release failure/hang is the SSL concurrency race. |
+| **Remaining Risk** | Release-mode harness runs can deadlock or time out until SSL stream access is
+strand-serialized. Test-side synchronization alone cannot fix concurrent
+read/write on one `ssl_stream_`. The asynchronous TLS I/O redesign (single strand
+per session, bounded write queue, graceful shutdown) is the required fix and has
+not yet been implemented. Until then, CI should run harness tests in Debug or
+ASan configuration, not Release. |
 
 ---
 

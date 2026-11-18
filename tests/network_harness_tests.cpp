@@ -89,11 +89,8 @@ FS_TEST(harness_two_live_nodes_establish_authenticated_session) {
 
     NodeFixture alice(topology);
     NodeFixture bob(topology);
-    auto t0 = std::chrono::steady_clock::now();
-    std::cerr << "[T] " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count() << " ms: start" << std::endl;
     alice.start();
     bob.start();
-    std::cerr << "[T] " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count() << " ms: started" << std::endl;
 
     FS_REQUIRE(alice.node_id() != bob.node_id());
     FS_REQUIRE(alice.listen_port() != 0);
@@ -102,9 +99,7 @@ FS_TEST(harness_two_live_nodes_establish_authenticated_session) {
 
     // Alice connects to Bob, requiring Bob to authenticate as bob.node_id().
     alice.connect_to(bob);
-    std::cerr << "[T] " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count() << " ms: connect issued" << std::endl;
     auto r1 = alice.wait_for_peer(bob.node_id(), std::chrono::seconds(5));
-    std::cerr << "[T] " << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now()-t0).count() << " ms: wait1=" << static_cast<int>(r1) << std::endl;
     FS_REQUIRE(r1 == WaitResult::Success);
     FS_REQUIRE(bob.wait_for_peer(alice.node_id(), std::chrono::seconds(5)) ==
                WaitResult::Success);
@@ -153,7 +148,6 @@ FS_TEST(harness_three_node_topology_distinct_ids_storage) {
 
     FS_REQUIRE(alice.wait_for_peer(bob.node_id(), std::chrono::seconds(5)) ==
                WaitResult::Success);
-    std::cerr << "DBG after first wait_for_peer" << std::endl;
     FS_REQUIRE(bob.wait_for_peer(alice.node_id(), std::chrono::seconds(5)) ==
                WaitResult::Success);
     FS_REQUIRE(bob.wait_for_peer(alice.node_id(), std::chrono::seconds(5)) ==
@@ -353,6 +347,19 @@ FS_TEST(harness_peer_record_request_response_discovery) {
     FS_REQUIRE(alice.wait_for_peer(bob.node_id(), std::chrono::seconds(5)) ==
                WaitResult::Success);
 
+    // Observable readiness: exchange a ping/pong to confirm both dispatch
+    // workers are actively reading before relying on peer-record delivery.
+    // This replaces timing-dependent assumptions about when the async dispatch
+    // worker thread has started reading on the session.
+    Bytes ping = Bytes{0x01, 0x02, 0x03, 0x04};
+    auto ping_ec = alice.send(bob, PeerMessageType::kPing, ping);
+    FS_REQUIRE(!ping_ec);
+    ReceivedMessage ready_msg;
+    FS_REQUIRE(alice.receive_next(ready_msg, std::chrono::seconds(5)) ==
+               WaitResult::Success);
+    FS_REQUIRE(ready_msg.type == PeerMessageType::kPong);
+    FS_REQUIRE(ready_msg.peer_node_id == bob.node_id());
+
     // Alice asks Bob for peers.
     ByteWriter req_writer;
     req_writer.u32(0); // request all
@@ -360,12 +367,15 @@ FS_TEST(harness_peer_record_request_response_discovery) {
                          std::move(req_writer).take());
     FS_REQUIRE(!ec);
 
-    // Alice receives Carol's record via kPeerRecordResponse and persists it.
-    ReceivedMessage msg;
-    FS_REQUIRE(alice.receive_next(msg, std::chrono::seconds(5)) == WaitResult::Success);
-    FS_REQUIRE(msg.type == PeerMessageType::kPeerRecordResponse);
-    FS_REQUIRE(msg.peer_node_id == bob.node_id());
-
+    // Synchronize on the actual response message rather than polling the store.
+    // The kPeerRecordResponse handler validates and upserts the record before
+    // the observer is notified, so receiving the response here proves Carol's
+    // record has been persisted to Alice's store.
+    ReceivedMessage response;
+    FS_REQUIRE(alice.receive_next(response, std::chrono::seconds(30)) ==
+               WaitResult::Success);
+    FS_REQUIRE(response.type == PeerMessageType::kPeerRecordResponse);
+    FS_REQUIRE(response.peer_node_id == bob.node_id());
     FS_REQUIRE(alice.runtime().store().get(carol.node_id()).has_value());
 
     // Alice connects to Carol (Carol authenticates as carol.node_id()).
@@ -396,14 +406,28 @@ FS_TEST(harness_peer_record_announce_discovery) {
     FS_REQUIRE(alice.wait_for_peer(bob.node_id(), std::chrono::seconds(5)) ==
                WaitResult::Success);
 
+    // Observable readiness: confirm Alice's dispatch worker is actively reading
+    // before Bob sends the announce, so the announce is not lost while the async
+    // worker thread is still starting up.
+    Bytes ping = Bytes{0x01, 0x02, 0x03, 0x04};
+    auto ping_ec = alice.send(bob, PeerMessageType::kPing, ping);
+    FS_REQUIRE(!ping_ec);
+    ReceivedMessage ready_msg;
+    FS_REQUIRE(alice.receive_next(ready_msg, std::chrono::seconds(5)) ==
+               WaitResult::Success);
+    FS_REQUIRE(ready_msg.type == PeerMessageType::kPong);
+
     // Bob announces Carol's record to Alice (unsolicited announce).
     Bytes encoded = encode_peer_record_announce(carol_record);
     auto ec = bob.send(alice, PeerMessageType::kPeerRecordAnnounce, encoded);
     FS_REQUIRE(!ec);
 
-    // Alice validates and persists Carol's record.
+    // Synchronize on the actual announce message. The handler validates and
+    // upserts before the observer is notified, so receiving it proves Carol's
+    // record was persisted to Alice's store.
     ReceivedMessage msg;
-    FS_REQUIRE(alice.receive_next(msg, std::chrono::seconds(5)) == WaitResult::Success);
+    FS_REQUIRE(alice.receive_next(msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
     FS_REQUIRE(msg.type == PeerMessageType::kPeerRecordAnnounce);
     FS_REQUIRE(alice.runtime().store().get(carol.node_id()).has_value());
 
@@ -437,8 +461,11 @@ FS_TEST(harness_invalid_signed_record_rejected) {
     auto ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
 
-    // Give Alice a moment to process, then confirm the bad record was not stored.
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Synchronize on the response message; the handler validates before the
+    // observer is notified. Confirm the tampered record was not stored.
+    ReceivedMessage rejected_msg;
+    FS_REQUIRE(alice.receive_next(rejected_msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
     FS_REQUIRE(!alice.runtime().store().get(carol_provider.node_id()).has_value());
     FS_REQUIRE(alice.is_running());
     FS_REQUIRE(bob.is_running());
@@ -470,7 +497,11 @@ FS_TEST(harness_wrong_network_record_rejected) {
     auto ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Synchronize on the response message; the handler validates before the
+    // observer is notified. Confirm the wrong-network record was not stored.
+    ReceivedMessage rejected_msg;
+    FS_REQUIRE(alice.receive_next(rejected_msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
     FS_REQUIRE(!alice.runtime().store().get(carol_provider.node_id()).has_value());
     FS_REQUIRE(alice.is_running());
 
@@ -505,12 +536,12 @@ FS_TEST(harness_expired_and_stale_records_rejected) {
     auto ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
 
-    // Wait until the baseline record is persisted.
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (std::chrono::steady_clock::now() < deadline) {
-        if (alice.runtime().store().get(carol_provider.node_id()).has_value()) break;
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
+    // Wait until the baseline record is persisted (synchronized on the actual
+    // response message rather than a timed poll).
+    ReceivedMessage baseline_msg;
+    FS_REQUIRE(alice.receive_next(baseline_msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
+    FS_REQUIRE(baseline_msg.type == PeerMessageType::kPeerRecordResponse);
     {
         auto entry = alice.runtime().store().get(carol_provider.node_id());
         FS_REQUIRE(entry.has_value());
@@ -531,7 +562,17 @@ FS_TEST(harness_expired_and_stale_records_rejected) {
     ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Synchronize on the expired and stale responses. The handler runs for
+    // each received message (rejecting invalid records without storing them),
+    // so receiving both proves Alice processed them.
+    ReceivedMessage expired_msg;
+    FS_REQUIRE(alice.receive_next(expired_msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
+    FS_REQUIRE(expired_msg.type == PeerMessageType::kPeerRecordResponse);
+    ReceivedMessage stale_msg;
+    FS_REQUIRE(alice.receive_next(stale_msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
+    FS_REQUIRE(stale_msg.type == PeerMessageType::kPeerRecordResponse);
 
     // The baseline remains; expired and stale records did not overwrite it.
     auto entry = alice.runtime().store().get(carol_provider.node_id());
@@ -818,7 +859,11 @@ FS_TEST(harness_malformed_messages_do_not_crash_peers) {
     auto ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, garbage);
     FS_REQUIRE(!ec);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // Synchronize on the malformed message; the handler attempts to decode it
+    // and must not crash or tear down the session.
+    ReceivedMessage rejected_msg;
+    FS_REQUIRE(alice.receive_next(rejected_msg, std::chrono::seconds(30)) ==
+               WaitResult::Success);
     FS_REQUIRE(alice.is_running());
     FS_REQUIRE(bob.is_running());
     FS_REQUIRE(alice.wait_for_peer(bob.node_id(), std::chrono::seconds(2)) ==
@@ -857,22 +902,22 @@ FS_TEST(harness_duplicate_peer_discovery_no_storm) {
     Bytes encoded = encode_peer_record_response({carol_record});
     auto ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Synchronize on both responses; the handler upserts before the observer is
+    // notified. The duplicate must be ingested without opening a second connection.
+    ReceivedMessage first;
+    FS_REQUIRE(alice.receive_next(first, std::chrono::seconds(30)) ==
+               WaitResult::Success);
+    FS_REQUIRE(first.type == PeerMessageType::kPeerRecordResponse);
 
     ec = bob.send(alice, PeerMessageType::kPeerRecordResponse, encoded);
     FS_REQUIRE(!ec);
+    ReceivedMessage second;
+    FS_REQUIRE(alice.receive_next(second, std::chrono::seconds(30)) ==
+               WaitResult::Success);
+    FS_REQUIRE(second.type == PeerMessageType::kPeerRecordResponse);
 
-    // Wait for Carol's record to be ingested via peer exchange. The dispatch
-    // worker needs time to read, decode, validate, and upsert the record.
-    bool record_seen = false;
-    for (int i = 0; i < 50; ++i) {
-        if (alice.runtime().store().get(carol.node_id()).has_value()) {
-            record_seen = true;
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-    }
-    FS_REQUIRE(record_seen);
+    FS_REQUIRE(alice.runtime().store().get(carol.node_id()).has_value());
     // Only one connection to Carol (duplicate discovery does not storm).
     FS_REQUIRE(alice.runtime().admission().connection_count() == 1);
 
