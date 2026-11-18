@@ -4,7 +4,9 @@
 #include "feinstat/crypto/crypto.hpp"
 
 #include <cerrno>
+#include <cstdint>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 #include <unistd.h>
 
@@ -650,9 +652,25 @@ void write_exact(int fd, const void* buf, std::size_t n) {
     }
 }
 
+// Absolute upper bound on a single ABCI frame, independent of the
+// caller-supplied max_message_size. A decoded length prefix larger than this
+// is malformed and is rejected before any allocation or protobuf parse, so a
+// corrupted or malicious length prefix can never drive protobuf
+// MergeFromImpl to read out of bounds (FST-BUG-0018 / VDEF-001).
+constexpr std::size_t kMaxFrameBytes = 64ULL * 1024ULL * 1024ULL; // 64 MiB
+
+// protobuf's table-driven parser (MergeFromImpl with TcParseTableBase) may
+// look past the end of the parse buffer when completing a varint or tag at
+// the buffer boundary. Those lookahead bytes are discarded - the parse limit
+// stays at length - but the reads are undefined behaviour and fault under
+// AddressSanitizer redzones. Allocate readable, zero-initialised slack so the
+// lookahead always lands in allocated memory (FST-BUG-0018 / VDEF-001).
+constexpr std::size_t kParseSlackBytes = 16;
+
 template <typename Message>
 Message read_framed_message(int fd, std::size_t max_message_size) {
-    // Read varint length
+    // Read varint length prefix (at most 10 bytes; decode_varint throws on
+    // overflow beyond 64 bits).
     std::uint8_t len_byte;
     std::vector<std::uint8_t> len_bytes;
     for (int i = 0; i < 10; ++i) {
@@ -662,17 +680,29 @@ Message read_framed_message(int fd, std::size_t max_message_size) {
     }
     std::size_t pos = 0;
     std::uint64_t length = decode_varint(len_bytes, pos);
-    if (length == 0 || length > max_message_size) {
-        throw std::runtime_error("invalid framed message length");
+
+    // Bounds-check the length prefix before any allocation or protobuf parse.
+    if (length == 0) {
+        throw std::runtime_error("invalid framed message length: zero");
+    }
+    if (length > max_message_size) {
+        throw std::runtime_error("framed message length exceeds max_message_size");
+    }
+    if (length > kMaxFrameBytes) {
+        throw std::runtime_error("framed message length exceeds absolute frame cap");
+    }
+    if (length > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
+        throw std::runtime_error("framed message length exceeds int32 range");
     }
 
-    // Read message bytes
-    std::vector<std::uint8_t> msg_bytes(length);
+    // Read message bytes into a buffer with readable, zero-initialised slack
+    // beyond length so protobuf's parse-time lookahead cannot read past the
+    // allocation (see kParseSlackBytes). The parse limit stays exactly length.
+    std::vector<std::uint8_t> msg_bytes(length + kParseSlackBytes, 0);
     read_exact(fd, msg_bytes.data(), length);
 
     Message msg;
-    if (!msg.ParseFromArray(msg_bytes.data(),
-                            static_cast<int>(msg_bytes.size()))) {
+    if (!msg.ParseFromArray(msg_bytes.data(), static_cast<int>(length))) {
         throw std::runtime_error("failed to parse protobuf message");
     }
     return msg;

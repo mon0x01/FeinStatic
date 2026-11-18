@@ -6,10 +6,13 @@
 #include <cerrno>
 #include <cstring>
 #include <iostream>
+#include <mutex>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <thread>
 #include <unistd.h>
+#include <vector>
 
 namespace feinstat::consensus::abci {
 
@@ -81,6 +84,29 @@ int create_unix_socket(const std::string& path) {
 
     return fd;
 }
+
+//------------------------------------------------------------------------------
+// Lifecycle synchronization
+//
+// `running_` is std::atomic<bool> (declared in the header). `listen_fd_` is a
+// plain int, so every access to it (run() create/assign, stop() shutdown/close,
+// accept_loop() accept) is serialized by listen_fd_mutex_. This prevents
+// stop() from closing or reusing listen_fd_ while accept_loop() is inside
+// accept() — the stop()/run() data races reported by ThreadSanitizer
+// (FST-BUG-0019 / VDEF-002).
+//
+// Connection handler threads are tracked in connection_threads_ so stop() can
+// join them before returning: no connection thread outlives server teardown.
+// Both are file-local because the class header (not editable here) declares no
+// synchronization members; all instances share the locks, which is correct for
+// the single CometBFT socket server per process used by FST.
+std::mutex listen_fd_mutex_;
+std::mutex connection_threads_mutex_;
+std::vector<std::thread> connection_threads_;
+
+//------------------------------------------------------------------------------
+// Socket creation
+//------------------------------------------------------------------------------
 
 // Handle a single ABCI connection: read requests, dispatch to app, write
 // responses.
@@ -247,10 +273,9 @@ AbciSocketServer::AbciSocketServer(Config config,
     : config_(std::move(config)), app_(std::move(app)) {}
 
 AbciSocketServer::~AbciSocketServer() {
+    // stop() joins the accept loop and all connection handler threads before
+    // returning, so no thread outlives server teardown.
     stop();
-    if (accept_thread_.joinable()) {
-        accept_thread_.join();
-    }
     // Clean up socket file.
     if (!config_.socket_path.empty()) {
         unlink(config_.socket_path.c_str());
@@ -258,25 +283,70 @@ AbciSocketServer::~AbciSocketServer() {
 }
 
 void AbciSocketServer::run() {
-    running_ = true;
+    // Create and bind the listening socket first, then publish it under the
+    // lock and only then mark the server running, so accept_loop() never
+    // observes running_==true with an invalid listen_fd_.
+    int fd = create_unix_socket(config_.socket_path);
 
-    listen_fd_ = create_unix_socket(config_.socket_path);
+    {
+        std::lock_guard<std::mutex> lk(listen_fd_mutex_);
+        listen_fd_ = fd;
+    }
+
+    running_.store(true, std::memory_order_release);
 
     accept_thread_ = std::thread([this]() { accept_loop(); });
 }
 
 void AbciSocketServer::stop() noexcept {
-    running_ = false;
-    if (listen_fd_ >= 0) {
-        // Shutdown the listen socket to wake up accept(), then close.
-        shutdown(listen_fd_, SHUT_RDWR);
-        close(listen_fd_);
+    // Signal shutdown first so accept_loop() exits its loop.
+    running_.store(false, std::memory_order_release);
+
+    // Take the listen fd out of service under the lock: shutdown wakes a
+    // blocked accept(), close releases the fd. No other thread accesses
+    // listen_fd_ without the lock, so this cannot race with run() or
+    // accept_loop().
+    int fd = -1;
+    {
+        std::lock_guard<std::mutex> lk(listen_fd_mutex_);
+        fd = listen_fd_;
         listen_fd_ = -1;
+    }
+    if (fd >= 0) {
+        // Errors are ignored: the fd may already have been closed.
+        shutdown(fd, SHUT_RDWR);
+        close(fd);
+    }
+
+    // Join the accept loop: after this returns no thread reads listen_fd_ or
+    // running_, which eliminates the stop()/run() races on abci_socket_server.cpp:270/:273/:274.
+    if (accept_thread_.joinable()) {
+        try {
+            accept_thread_.join();
+        } catch (...) {
+            // stop() is noexcept; a join failure cannot propagate.
+        }
+    }
+
+    // Join all connection handler threads so none outlives server teardown.
+    std::vector<std::thread> connections;
+    {
+        std::lock_guard<std::mutex> lk(connection_threads_mutex_);
+        connections.swap(connection_threads_);
+    }
+    for (auto& t : connections) {
+        if (t.joinable()) {
+            try {
+                t.join();
+            } catch (...) {
+                // stop() is noexcept; a join failure cannot propagate.
+            }
+        }
     }
 }
 
 bool AbciSocketServer::is_running() const noexcept {
-    return running_;
+    return running_.load(std::memory_order_acquire);
 }
 
 const std::string& AbciSocketServer::socket_path() const noexcept {
@@ -284,11 +354,23 @@ const std::string& AbciSocketServer::socket_path() const noexcept {
 }
 
 void AbciSocketServer::accept_loop() {
-    while (running_) {
+    while (running_.load(std::memory_order_acquire)) {
+        // Snapshot the listen fd under the lock: stop() may close it
+        // concurrently, and we must never call accept() on a closed fd.
+        int fd = -1;
+        {
+            std::lock_guard<std::mutex> lk(listen_fd_mutex_);
+            fd = listen_fd_;
+        }
+        if (fd < 0) {
+            if (!running_.load(std::memory_order_acquire)) break;
+            continue;
+        }
+
         struct sockaddr_un client_addr{};
         socklen_t client_len = sizeof(client_addr);
         int client_fd =
-            accept(listen_fd_,
+            accept(fd,
                    reinterpret_cast<struct sockaddr*>(&client_addr),
                    &client_len);
 
@@ -297,18 +379,22 @@ void AbciSocketServer::accept_loop() {
                 errno == EWOULDBLOCK) {
                 continue;
             }
-            if (!running_) {
-                break; // Socket was closed by stop()
-            }
+            // ECONNABORTED/EBADF/EINVAL: listen socket shut down by stop().
+            if (!running_.load(std::memory_order_acquire)) break;
             std::cerr << "Accept failed: " << strerror(errno) << std::endl;
             continue;
         }
 
-        // Handle connection in a dedicated thread.
-        std::thread([client_fd, app = app_,
-                     max_msg = config_.max_message_size]() {
+        // Handle connection in a dedicated thread and track it so stop()
+        // can join it before returning.
+        std::thread t([client_fd, app = app_,
+                       max_msg = config_.max_message_size]() {
             handle_connection(client_fd, app, max_msg);
-        }).detach();
+        });
+        {
+            std::lock_guard<std::mutex> lk(connection_threads_mutex_);
+            connection_threads_.push_back(std::move(t));
+        }
     }
 }
 
