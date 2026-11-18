@@ -1,8 +1,12 @@
 #include "feinstat/staking/state.hpp"
 
+#include "feinstat/crypto/crypto.hpp"
+#include "feinstat/common/bytes.hpp"
+
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <set>
 #include <stdexcept>
 
 namespace feinstat::staking {
@@ -16,6 +20,16 @@ const Validator* StakingState::validator(
         return nullptr;
     }
     return &it->second;
+}
+
+Validator* StakingState::validator(
+    const OperatorKey& operator_key) noexcept {
+    const auto* self = this;
+    const auto* cv = self->validator(operator_key);
+    if (cv == nullptr) {
+        return nullptr;
+    }
+    return const_cast<Validator*>(cv);
 }
 
 const Validator* StakingState::validator_by_consensus(
@@ -62,6 +76,7 @@ void StakingState::register_validator(const OperatorKey& operator_key,
     v.status = ValidatorStatus::Registered;
     validators_.emplace(operator_key, std::move(v));
     consensus_to_operator_.emplace(consensus_key, operator_key);
+    validators_.find(operator_key)->second.last_active_height = current_height_;
 }
 
 void StakingState::bond(const OperatorKey& operator_key, Amount amount,
@@ -83,6 +98,7 @@ void StakingState::bond(const OperatorKey& operator_key, Amount amount,
     recompute_voting_power(v);
     v.status = ValidatorStatus::Bonded;
     v.last_updated = current_height;
+    v.last_active_height = current_height;
     ++v.nonce;
     current_height_ = std::max(current_height_, current_height);
     total_bonded_stake_ += amount;
@@ -111,6 +127,7 @@ void StakingState::unbond(const OperatorKey& operator_key, Amount amount,
     recompute_voting_power(v);
     total_bonded_stake_ -= amount;
     v.last_updated = current_height;
+    v.last_active_height = current_height;
     current_height_ = std::max(current_height_, current_height);
     if (v.bonded_stake == 0) {
         v.status = ValidatorStatus::Unbonded;
@@ -128,6 +145,7 @@ void StakingState::withdraw_unbonded(const OperatorKey& operator_key,
                          "validator not found");
     }
     current_height_ = std::max(current_height_, current_height);
+    it->second.last_active_height = current_height;
     unbonding_queue_.erase(
         std::remove_if(unbonding_queue_.begin(), unbonding_queue_.end(),
                        [&](const UnbondingEntry& e) {
@@ -180,6 +198,7 @@ void StakingState::set_consensus_key(const OperatorKey& operator_key,
     }
     v.consensus_key = new_consensus_key;
     consensus_to_operator_.emplace(new_consensus_key, operator_key);
+    v.last_active_height = current_height_;
 }
 
 void StakingState::delegate(const Delegator& delegator,
@@ -336,6 +355,186 @@ std::uint64_t StakingState::voting_power_hhi_ppm() const {
         hhi += (share * share) / 1'000'000ULL;
     }
     return hhi;
+}
+
+void StakingState::record_activity(const OperatorKey& operator_key,
+                                   Height current_height) {
+    auto it = validators_.find(operator_key);
+    if (it == validators_.end()) {
+        throw StakeError(StakeErrorCode::validator_not_found,
+                         "validator not found");
+    }
+    it->second.last_active_height = current_height;
+    current_height_ = std::max(current_height_, current_height);
+}
+
+Height StakingState::current_epoch(Height current_height) const noexcept {
+    if (params_.epoch_length == 0) {
+        return 0;
+    }
+    return current_height / params_.epoch_length;
+}
+
+EpochInfo StakingState::epoch_info(Height current_height) const noexcept {
+    return EpochInfo{current_epoch(current_height), params_.epoch_length,
+                     last_transition_height_};
+}
+
+EpochInfo StakingState::transition_epoch(Height current_height) {
+    current_height_ = std::max(current_height_, current_height);
+    const Height epoch = current_epoch(current_height);
+    EpochInfo info{epoch, params_.epoch_length, last_transition_height_};
+
+    if (params_.epoch_length == 0 || epoch <= last_epoch_) {
+        return info;
+    }
+
+    // Epoch boundary (FST-REQ-0037, ADR-0003):
+    // 1. Inactivity leak: bonded validators inactive for more than
+    //    inactivity_leak_after_epochs epochs lose a fraction of bonded stake
+    //    per epoch of inactivity (nothing-at-stake mitigation; stake of
+    //    long-inactive validators gradually bleeds to zero).
+    // 2. Committee rotation: the active committee is recomputed from bonded
+    //    stake at the epoch boundary via validator_set() (top max_validators
+    //    by voting power); validators that fall out rotate out of the
+    //    active committee until they re-enter.
+    const Height epoch_start = epoch * params_.epoch_length;
+    for (auto& [_, v] : validators_) {
+        if (v.status != ValidatorStatus::Bonded || v.bonded_stake == 0) {
+            continue;
+        }
+        const Height validator_epoch = current_epoch(v.last_active_height);
+        const Height epochs_inactive = epoch - validator_epoch;
+        if (epochs_inactive <= params_.inactivity_leak_after_epochs) {
+            continue;
+        }
+        Amount leak = 0;
+        const std::uint32_t bp = params_.inactivity_leak_fraction_basis_points;
+        if (bp > 0) {
+            if (v.bonded_stake > std::numeric_limits<Amount>::max() / bp) {
+                leak = v.bonded_stake;
+            } else {
+                leak = (v.bonded_stake * bp) / 10'000ULL;
+            }
+        }
+        if (leak == 0 && v.bonded_stake > 0) {
+            leak = 1; // at least one atom while the leak is active
+        }
+        leak = std::min(leak, v.bonded_stake);
+        v.bonded_stake -= leak;
+        recompute_voting_power(v);
+        total_bonded_stake_ -= leak;
+        if (v.bonded_stake == 0) {
+            v.status = ValidatorStatus::Unbonded;
+        }
+    }
+
+    last_epoch_ = epoch;
+    last_transition_height_ = epoch_start;
+    info.last_transition_height = epoch_start;
+    return info;
+}
+
+SlashingOutcome StakingState::submit_slashing_evidence(
+    const SlashingEvidence& evidence, Height current_height) {
+    current_height_ = std::max(current_height_, current_height);
+    SlashingOutcome outcome;
+    outcome.reason = "evidence not submitted";
+
+    if (evidence.type != EvidenceType::equivocation) {
+        throw StakeError(StakeErrorCode::evidence_invalid,
+                         "unsupported evidence type");
+    }
+
+    const EquivocationEvidence& e = evidence.equivocation;
+    if (e.vote_a == e.vote_b) {
+        throw StakeError(StakeErrorCode::evidence_invalid,
+                         "votes are identical; not equivocation");
+    }
+
+    // Look up the equivocating validator by consensus key. Slashing is
+    // evidence-based only (ADR-0003): no discretionary slashing.
+    const Validator* cv = validator_by_consensus(e.consensus_key);
+    if (cv == nullptr) {
+        throw StakeError(StakeErrorCode::evidence_invalid,
+                         "evidence references unknown validator");
+    }
+    if (cv->status != ValidatorStatus::Bonded &&
+        cv->status != ValidatorStatus::Unbonding) {
+        throw StakeError(StakeErrorCode::validator_not_bonded,
+                         "validator is not slashable");
+    }
+
+    // Verify the validator's signatures over both conflicting votes. An
+    // equivocation is slashable only when both signatures verify under the
+    // validator's consensus key.
+    if (!crypto::verify_ed25519(e.consensus_key, e.vote_a,
+                                e.signature_a)) {
+        throw StakeError(StakeErrorCode::signature_verification_failed,
+                         "first vote signature invalid");
+    }
+    if (!crypto::verify_ed25519(e.consensus_key, e.vote_b,
+                                e.signature_b)) {
+        throw StakeError(StakeErrorCode::signature_verification_failed,
+                         "second vote signature invalid");
+    }
+
+    // Canonical evidence hash; reject duplicate submissions so a validator is
+    // slashed at most once per distinct evidence item.
+    ByteWriter writer;
+    writer.u8(static_cast<Byte>(evidence.type));
+    writer.fixed(e.consensus_key);
+    writer.u64(e.height);
+    writer.u64(e.round);
+    writer.blob(e.vote_a);
+    writer.blob(e.vote_b);
+    writer.fixed(e.signature_a);
+    writer.fixed(e.signature_b);
+    const feinstat::Hash evidence_hash =
+        crypto::sha256(std::move(writer).take());
+    if (!submitted_evidence_.insert(evidence_hash).second) {
+        throw StakeError(StakeErrorCode::evidence_duplicate,
+                         "identical evidence already submitted");
+    }
+
+    // Slash equivocation_slash_basis_points of bonded stake, bounded by the
+    // validator's bonded stake (at least one atom when stake is at risk).
+    Validator& v = validators_.find(cv->operator_key)->second;
+    const std::uint32_t bp = params_.equivocation_slash_basis_points;
+    Amount amount = 0;
+    if (bp > 0) {
+        if (v.bonded_stake > std::numeric_limits<Amount>::max() / bp) {
+            amount = v.bonded_stake;
+        } else {
+            amount = (v.bonded_stake * bp) / 10'000ULL;
+        }
+    }
+    if (amount == 0 && v.bonded_stake > 0) {
+        amount = 1;
+    }
+    amount = std::min(amount, v.bonded_stake);
+
+    v.bonded_stake -= amount;
+    recompute_voting_power(v);
+    total_bonded_stake_ -= amount;
+    if (v.bonded_stake == 0) {
+        v.status = ValidatorStatus::Unbonded;
+    }
+
+    slashing_events_.push_back(SlashingEvent{
+        v.operator_key,
+        v.consensus_key,
+        amount,
+        current_height,
+        "equivocation",
+        evidence_hash,
+    });
+
+    outcome.accepted = true;
+    outcome.slashed_amount = amount;
+    outcome.new_status = v.status;
+    outcome.reason = "slashed for equivocation";
+    return outcome;
 }
 
 } // namespace feinstat::staking

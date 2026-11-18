@@ -210,13 +210,22 @@ ResponseFinalizeBlock FstAbciApplication::finalize_block(
     // Fork detection: a block at or below the CometBFT-finalized height is a
     // stale or conflicting block. CometBFT remains authoritative for the
     // canonical chain; this is defense-in-depth application-level tracking.
-    if (finality_checker_.would_fork(request.height)) {
+    if (finality_checker_.would_fork(
+            static_cast<std::uint64_t>(request.height))) {
         ResponseFinalizeBlock::Event ev;
         ev.type = "fork_detected";
         response.events.push_back(std::move(ev));
     }
 
     height_ = static_cast<staking::Height>(request.height);
+
+    // Epoch transition (FST-REQ-0037, ADR-0003): at each epoch boundary the
+    // inactivity leak is applied to inactive bonded validators and the
+    // active committee is rotated (recomputed from bonded stake).
+    // Deterministic in height; a no-op unless this block begins a new epoch.
+    const staking::EpochInfo epoch_transition =
+        staking_state_.transition_epoch(height_);
+    (void)epoch_transition;
 
     // Apply each transaction in the block (v0.40.0: no DeliverTx).
     std::set<Outpoint> block_spent;
