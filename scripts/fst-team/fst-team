@@ -290,8 +290,7 @@ cmd_doctor() {
 
   echo "--- Agent definitions ---"
   local ask_found=0
-  for f in /home/monil/Desktop/CXX/FeinStatic-agents/integration/.kilo/agents/fst-research.md /home/monil/Desktop/CXX/FeinStatic-agents/integration/.kilo/agents/fst-*.md; do
-    [ -f "$f" ] || continue
+  for f in /home/monil/Desktop/CXX/FeinStatic-agents/integration/.kilo/agents/fst-*.md; do
     local name
     name="$(basename "$f")"
     if grep -q 'bash: ask' "$f" 2>/dev/null; then
@@ -478,20 +477,24 @@ print(' '.join(s.get('id','') for s in data if s.get('directory') == wt))
   export WT
   export BEFORE="$before_sessions"
 
-  # Launch kilo run in background (detached). A subshell captures the actual
-  (
+  # Launch kilo run fully detached (setsid) so the worker survives the caller
+  # and is not interrupted when the dispatch command returns. stdin is closed
+  # so kilo cannot hold the caller's terminal. A subshell captures the actual
+  # process exit code to a sidecar file so collect can report real exit status.
+  # Variables are passed as positional args so free-form task text is safe.
+  setsid bash -c '
+    KILO_BIN="$1"; agent="$2"; worktree="$3"; log_file="$4"; exit_file="$5"; task="$6"
     "$KILO_BIN" run \
       --agent "$agent" \
       --dir "$worktree" \
       --format json \
       --auto \
       --title "fst-team: $task" \
-      "$task" > "$log_file" 2>&1
-    echo $? > "$LOG_DIR/${task_id}.exit"
-  ) &
+      "$task" < /dev/null > "$log_file" 2>&1
+    echo $? > "$exit_file"
+  ' _ "$KILO_BIN" "$agent" "$worktree" "$log_file" "$LOG_DIR/${task_id}.exit" "$task" \
+    < /dev/null >> "$log_file" 2>&1 &
   local pid=$!
-
-  # Disown so the process survives after this script exits.
   disown "$pid" 2>/dev/null || true
 
   # Persist session ID from verified Kilo CLI output (kilo session list), not
@@ -597,15 +600,48 @@ cmd_collect() {
   echo "  Agent: ${agent:-(unknown)}"
   echo "  Log: $log_file"
 
-  # Wait for process to complete if still running, then read the actual exit
-  # code captured by the dispatch subshell sidecar file.
+  # Wait for the Kilo session to become idle (task done) or for the process
+  # to exit. kilo run --auto leaves the session alive (idle) after a task, so
+  # we key completion on session status, not process exit. The worker is
+  # setsid-detached, so it survives even if this collect call is interrupted.
   local exit_code=0
   local exit_file="$LOG_DIR/${task_id}.exit"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+  local session_done=0
+  if [ -n "$session_id" ]; then
+    echo "  Waiting for session $session_id to complete..."
+    local waited=0
+    while [ "$waited" -lt "$MAX_WAIT_SECONDS" ]; do
+      local st
+      st="$("$KILO_BIN" session list --format json 2>/dev/null \
+        | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for s in data:
+    if s.get('id') == '$session_id':
+        print(s.get('status', {}).get('type', 'unknown'))
+        sys.exit(0)
+sys.exit(0)
+" 2>/dev/null)"
+      case "$st" in
+        idle|completed) session_done=1; break ;;
+        busy) ;;
+        *) session_done=1; break ;;
+      esac
+      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+        session_done=1; break
+      fi
+      sleep "$SESSION_POLL_INTERVAL"
+      waited=$((waited + SESSION_POLL_INTERVAL))
+    done
+  elif [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     echo "  Waiting for process (PID $pid) to complete..."
     local waited=0
     while [ "$waited" -lt "$MAX_WAIT_SECONDS" ]; do
       if ! kill -0 "$pid" 2>/dev/null; then
+        session_done=1
         break
       fi
       sleep "$SESSION_POLL_INTERVAL"
@@ -619,6 +655,11 @@ cmd_collect() {
     exit_code=0
   else
     exit_code=1
+  fi
+  if [ "$session_done" -eq 1 ]; then
+    echo "  Status: COMPLETED (exit code: $exit_code)"
+  else
+    echo "  Status: STILL RUNNING (exit code: $exit_code)"
   fi
 
   echo "  Status: COMPLETED (exit code: $exit_code)"
@@ -634,9 +675,12 @@ cmd_collect() {
     fi
   fi
 
-  # Extract commit SHAs
+  # Extract commit SHAs and reject invalid / all-zero placeholder SHAs.
   local shas
-  shas="$(extract_commit_shas "$log_file")"
+  shas="$(extract_commit_shas "$log_file" \
+    | grep -vE '^0{40}$' \
+    | grep -E '^[0-9a-f]{40}$' \
+    | sort -u)"
   if [ -n "$shas" ]; then
     echo "--- Commit SHA(s) found ---"
     echo "$shas"
