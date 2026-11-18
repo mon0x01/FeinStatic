@@ -14,10 +14,13 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
-- Baseline commit SHA: `53200ee6a519a6777989ba3bdedb1922310f5c9d` (HEAD of `team/integration`; prior baseline `4521a3b` is an ancestor, 2 commits behind — commits `b85bc4a..53200ee`: integration ledger updates recording dispatched VT-02 and IT-02 tasks)
+- Baseline commit SHA: `e0fadab` (HEAD of `team/integration`; commits `b85bc4a..e0fadab`: fst-team lifecycle fix `e0fadab` on top of `53200ee`)
 - Integration worktree: `/home/monil/Desktop/CXX/FeinStatic-agents/integration`
 - Setup commit SHA: `e45824f54f607b73c79c1d49f71c23c0541bd6a0` (setup(fst): add four custom Kilo agents and integration-status ledger)
 - External handoff commits present in `team/integration` history: `bdb07fd` (debugging FST-BUG-0014/0015 fix, merged), `f360985` (implementation FST-REQ-0036 FinalityChecker, merged), `5e1c145` (debugging VDEF-001/VDEF-002 fixes, merged), `ad9bf01` (debugging FST-BUG-0018/0019 ABCI framing + socket-server lifecycle fix, merged), `c573ef9` (implementation docs-only reconciliation, present as ancestor). `2e4fb66` (verification gate evidence for `0773794`) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs). `0f55970` (verification baseline evidence at `6f8fa52` across all 5 presets, fst-verification) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs).
+- Incoming handoffs NOT yet in `team/integration` history (source to merge after gate pass):
+  - `38dc9b5449c5bfbd61fb7512fdd0921763d22f68` (fst-implementation, team/implementation) — FST-REQ-0037 validator entry & exit (staking inactivity leak, epoch rotation, slashing evidence; also fixes clang-release `-Wsign-conversion` at `fst_application.cpp:213`). Status: RECEIVED. Verification gate NOT yet passed for this commit — blocking integration until fst-verification re-verifies at a state including this fix.
+  - `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (fst-verification, detached at b85bc4a) — five-preset verification baseline at `b85bc4a`. Status: RECEIVED, gate NOT PASSED (clang-release build exit 1, ASan abort, release timing failures). See Verification Gate Evidence section below.
 
 ## Active tasks and assigned agents
 | Task | Assigned agent | Branch | Worktree | Status |
@@ -30,8 +33,8 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 | DT-03 | Defect FST-BUG-0013 SecureSession handshake_result_ cross-thread race — DEFERRED to Phase 4; no source modifications yet; inventory existing evidence only | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | DEFERRED |
 | VDEF-fix | VDEF-2026-11-18-001 ASan SEGV abci_codec.cpp:674 + VDEF-2026-11-18-002 TSan races abci_socket_server.cpp:270/:273 — DISPATCHED to fst-debugging (task_1795032671) | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | COMPLETE |
 | RS-01 | Five-agent migration and research agent setup — fst-research agent definition, research-status ledger, engineering charter, decision closure roadmap, team/research worktree, five-agent controller extension, AGENTS.md sync, read-only research pilot | `fst-research` | `team/research` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | IN_PROGRESS |
-| VT-02 | Verify current team/integration HEAD across all five build presets (debug, release, asan, clang-release, tsan); establish fresh verification baseline | `fst-verification` | `team/verification` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | IN_PROGRESS (task_1795041607_fst-verification, session ses_e0f96f32, pid 4156438, running since 2026-11-18T22:40:07Z) |
-| IT-02 | FST-REQ-0037 validator entry & exit: inactivity leak, epoch-based committee rotation, epoch transitions, slashing evidence flow (src/staking/, include/feinstat/staking/); tests/ owned by fst-debugging — coordinate via fst-integration | `fst-implementation` | `team/implementation` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | IN_PROGRESS (task_1795041609_fst-implementation, session ses_e0f65e22, pid 4156542, running since 2026-11-18T22:40:09Z) |
+| VT-02 | Verify current team/integration HEAD across all five build presets (debug, release, asan, clang-release, tsan); establish fresh verification baseline | `fst-verification` | `team/verification` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | COMPLETE (task_1795041607_fst-verification, session ses_e0f96f32, pid 4156438, ran 2026-11-18T22:40:07Z–23:40Z, exit 0; verified commit `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe`; gate NOT PASSED — see Verification Gate Evidence below) |
+| IT-02 | FST-REQ-0037 validator entry & exit: inactivity leak, epoch-based committee rotation, epoch transitions, slashing evidence flow (src/staking/, include/feinstat/staking/); tests/ owned by fst-debugging — coordinate via fst-integration | `fst-implementation` | `team/implementation` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | COMPLETE (task_1795041609_fst-implementation, session ses_e0f65e22, pid 4156542, ran 2026-11-18T22:40:09Z–23:36Z, exit 0; committed `38dc9b5449c5bfbd61fb7512fdd0921763d22f68` on team/implementation; source verified debug+clang-release -Werror clean, staking 18/18 PASS, ABCI 14/14 PASS; handoff to fst-integration for integration gate) |
 
 ## Source-file ownership reservations
 
@@ -53,6 +56,8 @@ Completed reservations (IT-01 Phase 3 files: consensus/**, staking/**, monetary/
 | team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T19:31:45Z |
 | team/implementation | c573ef99dc2351972d447842d1bfcc93668caefa | fst-implementation | team/integration | RECEIVED | 2026-11-18T19:52:00Z |
 | team/verification | 2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e | fst-verification | team/integration | RECEIVED | 2026-11-18T19:55:00Z |
+| team/implementation | 38dc9b5449c5bfbd61fb7512fdd0921763d22f68 | fst-implementation | team/integration | RECEIVED | 2026-11-18T23:36:00Z |
+| team/verification | b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe | fst-verification | team/integration | RECEIVED | 2026-11-18T23:40:00Z |
 | team/implementation | f360985e98dd882556cc9e6b531ed2b4099ac727 | fst-implementation | team/integration | INTEGRATED | 2026-11-18T20:xx:00Z |
 | team/debugging | 5e1c14583d46096ad309a3a2149a42bc3dfc4be2 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T20:xx:00Z |
 | team/debugging | ad9bf01ac05ca1a1b70a1e8a9821b7f2a2ed5504 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T02:10:31Z |
@@ -112,6 +117,30 @@ Change: verification baseline recorded across all 5 CMake presets at `6f8fa52`; 
 
 Gate evaluation: all 5 presets build exit 0 = YES; Debug suite 343/343 PASS = YES; clang-release 343/343 PASS = YES; Release 340/343 (3 known FST-BUG-0017 timing failures, deferred to Phase 4) = acceptable; ASan abort at abci_codec.cpp:674 = VDEF-2026-11-18-001 (HIGH) — fixed at `ad9bf01`, already integrated; TSan races at abci_socket_server.cpp:270/:273 = VDEF-2026-11-18-002 (MEDIUM) — fixed at `ad9bf01`, already integrated; tsan cometbft port-bind failure = parallel-execution artifact, not a code defect. **Overall gate: PASSES for all build configurations; sanitizer defects identified and fixed at `ad9bf01`.**
 
+## Verification Gate Evidence — Commit b85bc4a (five-preset baseline, GATE NOT PASSED)
+
+Exact commit SHA tested: `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (checked out detached in `team/verification`; source branch `team/verification`)
+Change: five-preset verification baseline at `b85bc4a`. This commit is an ancestor of `team/integration` HEAD (`e0fadab`); `team/integration` is one commit ahead (`53200ee` + `e0fadab`). **Note:** `ad9bf01` (ASan/TSan fixes) is integrated into `team/integration` but is NOT in `b85bc4a` — so the ASan abort at b85bc4a reflects pre-fix state. The clang-release build failure IS present at b85bc4a and is fixed by implementation commit `38dc9b5` (not yet merged to `team/integration`).
+
+| Preset | Configure exit | Build exit | Test command | Tests exit | Test result | Log files |
+|--------|---------------|------------|--------------|------------|-------------|-----------|
+| debug | 0 | 0 | `cmake --preset debug && cmake --build build/debug -j4 && timeout 600 ./build/debug/feinstatic_tests` | 0 | 343 passed, 0 failed, 343 registered — PASS | /tmp/kilo/verify-b85bc4a-debug-{configure,build,tests}.log |
+| release | 0 | 0 | `cmake --preset release && cmake --build build/release -j4 && timeout 300 ./build/release/feinstatic_tests` | 1 | 339 passed, 4 failed, 343 registered — all 4 timing `receive_next` 30s timeouts in network harness (FST-BUG-0017 class) | /tmp/kilo/verify-b85bc4a-release-{configure,build,tests}.log |
+| asan | 0 | 0 | `cmake --preset asan && cmake --build build/asan -j4 && timeout 300 ./build/asan/feinstatic_tests` | 1 | 14 ABCI unit tests pass, then ASan DEADLYSIGNAL/SEGV in protobuf `MergeFromImpl` via `abci_codec.cpp:705` `read_framed_message` during CometBFT integration (`==ABORTING`) | /tmp/kilo/verify-b85bc4a-asan-{configure,build,tests}.log |
+| clang-release (-Werror) | 0 | 1 | skipped | skipped | **BUILD FAIL**: `src/consensus/abci/fst_application.cpp:213` `-Wsign-conversion` (`int64_t`→`uint64_t` in `would_fork(request.height)`) under `-Werror`; tests not run | /tmp/kilo/verify-b85bc4a-clang-release-{configure,build}.log |
+| tsan | 0 | 0 | `cmake --preset tsan && cmake --build build/tsan -j4 && timeout 300 ./build/tsan/feinstatic_tests` | 0 | 343 passed, 0 failed, 343 registered — PASS; no ThreadSanitizer warnings (clean isolated run) | /tmp/kilo/verify-b85bc4a-tsan-{configure,build,tests}.log |
+
+Release failures: `peer_record_request_response_discovery:375`, `wrong_network_record_rejected:503`, `expired_and_stale_records_rejected:542`, `duplicate_peer_discovery_no_storm:909`.
+
+Gate evaluation: "all five presets build exit 0" = **NOT MET** (clang-release build exits 1). "debug suite 343/343 PASS" = **MET**. **Overall five-preset baseline gate: NOT PASSED** — clang-release build failure blocks integration.
+
+Defects observed at `b85bc4a`:
+- **VDEF-b85bc4a-001 (HIGH)**: clang-release build failure at `fst_application.cpp:213` — `int64_t`→`uint64_t` sign-conversion in `would_fork(request.height)` under `-Werror`. File `src/consensus/abci/fst_application.cpp` is within `fst-implementation` `src/consensus/**` reservation (task IT-01). **FIXED by implementation commit `38dc9b5`** (adds `static_cast<std::uint64_t>`) — commit is on `team/implementation`, RECEIVED handoff, awaiting merge into `team/integration` and re-verification.
+- **VDEF-b85bc4a-002 (HIGH)**: ASan SEGV in protobuf `MergeFromImpl` via `abci_codec.cpp:705` `read_framed_message` during CometBFT single-node genesis-and-commit (`==ABORTING`). Same defect class as VDEF-2026-11-18-001. Fix `ad9bf01` is integrated into `team/integration` but NOT present at `b85bc4a`.
+- **VDEF-b85bc4a-003 (MEDIUM)**: release-mode timing failures (4 `receive_next` 30s timeouts, FST-BUG-0017 class). Deferred to Phase 4.
+
+Recommended next step: merge `38dc9b5` into `team/integration` (it fixes VDEF-b85bc4a-001 and adds FST-REQ-0037 functionality), then dispatch fst-verification to re-verify all five presets at the merged `team/integration` HEAD before integration gate pass.
+
 ## Build and verification gates
 - Build presets: `debug`, `release`, `asan`, `clang-release`, `tsan` (CMakePresets.json)
 - Build gate: all five presets must compile with exit code 0; debug suite 343/343 PASS
@@ -144,6 +173,7 @@ Recorded at the permanent five-agent migration and the technology/dependency acc
 - VDEF-2026-11-18-001 → RESOLVED and INTEGRATED as FST-BUG-0018: ASan SEGV in ABCI framing (`src/consensus/abci/abci_codec.cpp:674`, read_framed_message → protobuf MergeFromImpl), HIGH. Root cause: protobuf 36.x table-dispatch indirect call on data-derived index for a valid 21-byte Request.info frame — protobuf-internal, not fixable by frame-length validation. Fix committed at `ad9bf01` (bounds-checked frame length + zero-initialized parse slack); defect register at `5e1c14583d46096ad309a3a2149a42bc3dfc4be2`. Verification Gate PASSED (debug 343/343; TSan 3/3 cometbft, 0 reports). Integrated into `team/integration` via merge commit. Remaining risk: ASan aborts on protobuf table-dispatch indirect call for valid Info frame — documented as protobuf-internal limitation, does not affect Debug/TSan paths.
 - VDEF-2026-11-18-002 → RESOLVED and INTEGRATED as FST-BUG-0019: TSan data races in `src/consensus/abci/abci_socket_server.cpp:270/:273/:274` (AbciSocketServer stop()/run() racing run() thread), HIGH. FIXED: `stop()` stops and joins io_context thread before closing sockets; `running_` made `std::atomic<bool>`; `listen_fd_` guarded by file-local mutex. Fix committed at `ad9bf01`; defect register at `5e1c14583d46096ad309a3a2149a42bc3dfc4be2`. Verification Gate PASSED (TSan 3/3 cometbft, 0 ThreadSanitizer reports; debug 343/343). Integrated into `team/integration` via merge commit.
 - FST-BUG-0017 (Release-mode timing failures) remains OPEN and DEFERRED to Phase 4.
+- **VDEF-b85bc4a-001 (HIGH): clang-release build failure at `fst_application.cpp:213`** — `-Wsign-conversion` (`int64_t`→`uint64_t` in `would_fork(request.height)`) under `-Werror`. Blocks integration gate ("all five presets build exit 0"). **FIXED by implementation commit `38dc9b5449c5bfbd61fb7512fdd0921763d22f68`** (RECEIVED handoff on `team/implementation`, not yet merged to `team/integration`). Required action: merge `38dc9b5` into `team/integration`, then re-verify all five presets at merged HEAD. Reporting agent: fst-verification. Exact SHA: `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe`.
 - Cross-cutting architectural finding (RESOLVED by f360985e): FST-REQ-0036 implemented as CometBFT-aligned FinalityChecker — FST side tracks CometBFT-finalized checkpoints, detects forks at application level. No architecture change or owner confirmation needed (ADR-0004/D-017 already selected CometBFT BFT; Raft D-024 is PROVISIONAL reference only). The coexistence of FeinStatic Raft code is a deprecation finding, not a blocker.
 
 ## Git synchronization protocol (ledger + accepted-commit propagation)
