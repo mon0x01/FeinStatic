@@ -110,8 +110,21 @@ Gate evaluation: FST-BUG-0013/0014/0015 fixes verified at 0773794 = PASS (debug 
 - `bdb07fd482fc2094487fa1407f33e1397973dc99` — accepted and integrated (fst-debugging FST-BUG-0014/0015 fix; Verification Gate PASSED; merged via merge commit `a89ccd8`)
 - `f360985e98dd882556cc9e6b531ed2b4099ac727` — accepted and integrated (fst-implementation FST-REQ-0036 FinalityChecker; Verification Gate PASSED debug 343/343; merged via history-preserving merge)
 - `5e1c14583d46096ad309a3a2149a42bc3dfc4be2` — accepted and integrated (fst-debugging VDEF-001/VDEF-002 fixes; Verification Gate PASSED debug+tsan; merged via history-preserving merge)
-## Outstanding blockers
 
+## Five-agent migration SHAs (commit a40f714)
+
+Recorded at the permanent five-agent migration. `main` is untouched by this migration; no `team/*` branch is pushed to `origin/main`.
+
+| Branch | Commit SHA | Worktree | Agent | Content |
+|---|---|---|---|---|
+| `team/integration` | `a40f71451ad8502c18808742664df57733455ed4` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | `fst-integration` | Migration: engineering charter, decision closure roadmap, research-status ledger, research-proposals dir, fst-research agent def, five-agent controller, integration ledger updates |
+| `team/research` | `f18d8e0dc087f051238569d41c176e9f78980c81` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | `fst-research` | Research pilot: CometBFT consensus candidate report + research-status ledger update (read-only) |
+| `team/implementation` | `f5213c1881ecba12f6737e820a6aa0646c251fc2` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | `fst-implementation` | implementation-status.md charter + five-agent role obligations |
+| `team/verification` | `716406b4c62856d27aaf84141f41cef74dd5d91a` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | `fst-verification` | verification-status.md charter + five-agent role obligations |
+| `team/debugging` | `72c5a55a3e154c38978ee0287dc17e97269b0977` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | `fst-debugging` | defect-register.md charter + five-agent role obligations |
+| `main` | `b69857a36daa04578be61ca3f7d2d7bf39bfa99c` | `/home/monil/Desktop/CXX/FeinStatic` | (none) | Untouched by this migration |
+
+## Outstanding blockers
 - (none for Phases 3–4 — unblocked by owner decisions D-015/D-016/D-017/D-037 APPROVED via ADR-0002/0003/0004/0005)
 - VDEF-2026-11-18-001 → RESOLVED and INTEGRATED as FST-BUG-0018: ASan SEGV in ABCI framing (`src/consensus/abci/abci_codec.cpp:674`, read_framed_message → protobuf MergeFromImpl), HIGH. Root cause: protobuf 36.x table-dispatch indirect call on data-derived index for a valid 21-byte Request.info frame — protobuf-internal, not fixable by frame-length validation. Fix committed at `ad9bf01` (bounds-checked frame length + zero-initialized parse slack); defect register at `5e1c14583d46096ad309a3a2149a42bc3dfc4be2`. Verification Gate PASSED (debug 343/343; TSan 3/3 cometbft, 0 reports). Integrated into `team/integration` via merge commit. Remaining risk: ASan aborts on protobuf table-dispatch indirect call for valid Info frame — documented as protobuf-internal limitation, does not affect Debug/TSan paths.
 - VDEF-2026-11-18-002 → RESOLVED and INTEGRATED as FST-BUG-0019: TSan data races in `src/consensus/abci/abci_socket_server.cpp:270/:273/:274` (AbciSocketServer stop()/run() racing run() thread), HIGH. FIXED: `stop()` stops and joins io_context thread before closing sockets; `running_` made `std::atomic<bool>`; `listen_fd_` guarded by file-local mutex. Fix committed at `ad9bf01`; defect register at `5e1c14583d46096ad309a3a2149a42bc3dfc4be2`. Verification Gate PASSED (TSan 3/3 cometbft, 0 ThreadSanitizer reports; debug 343/343). Integrated into `team/integration` via merge commit.
