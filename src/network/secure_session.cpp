@@ -14,6 +14,7 @@
 #include <array>
 #include <cstring>
 #include <fstream>
+#include <iostream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -39,12 +40,6 @@ SecureSessionContext::SecureSessionContext(
     ssl_ctx_.set_options(boost::asio::ssl::context::no_tlsv1 |
                          boost::asio::ssl::context::no_tlsv1_1 |
                          boost::asio::ssl::context::no_tlsv1_2);
-    // SSL_MODE_AUTO_RETRY makes SSL_write()/SSL_read() automatically handle
-    // internal BIO reads/writes (e.g., for TLS record processing) without
-    // returning SSL_ERROR_WANT_READ/SSL_ERROR_WANT_WRITE. This prevents
-    // potential deadlocks where one SSL operation blocks waiting for the
-    // underlying socket while another operation on the same stream is blocked
-    // from a different thread.
     SSL_CTX_set_mode(ssl_ctx_.native_handle(), SSL_MODE_AUTO_RETRY);
     ssl_ctx_.set_verify_mode(boost::asio::ssl::verify_peer |
                              boost::asio::ssl::context::verify_fail_if_no_peer_cert);
@@ -103,8 +98,8 @@ void SecureSessionContext::generate_tls_credentials() {
     tls_secret_key_ = pair.secret_key;
 
     EVP_PKEY* evp_key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr,
-                                                      tls_secret_key_.data(),
-                                                      tls_secret_key_.size());
+                                                     tls_secret_key_.data(),
+                                                     tls_secret_key_.size());
     if (!evp_key) throw std::runtime_error("failed to create EVP_PKEY from private key");
 
     X509* cert = X509_new();
@@ -120,7 +115,7 @@ void SecureSessionContext::generate_tls_credentials() {
                                (const unsigned char*)"FST Network", -1, -1, 0);
     X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
                                (const unsigned char*)crypto::hex(tls_public_key_.data(),
-                                                                  tls_public_key_.size()).c_str(),
+                                                                 tls_public_key_.size()).c_str(),
                                -1, -1, 0);
     X509_set_issuer_name(cert, name);
     X509_set_subject_name(cert, name);
@@ -211,13 +206,243 @@ SecureSession::SecureSession(boost::asio::io_context& io,
                              std::shared_ptr<const KeyProvider> identity)
     : io_(io), socket_(io),
       ssl_stream_(std::move(socket_), context.ssl_context()),
+      strand_(io_),
       context_(context), identity_(std::move(identity)) {
 }
 
 SecureSession::~SecureSession() {
-    boost::system::error_code ec;
-    ssl_stream_.next_layer().close(ec);
+    if (!closed_.load(std::memory_order_acquire)) {
+        boost::system::error_code ec;
+        ssl_stream_.next_layer().close(ec);
+    }
 }
+
+void SecureSession::close(boost::system::error_code& ec) noexcept {
+    ec = boost::system::error_code{};
+    // Idempotent: only the first caller initiates the strand-bound close.
+    if (closed_.exchange(true)) return;
+    boost::asio::post(strand_, [self = shared_from_this()]() {
+        self->close_locked();
+    });
+}
+
+void SecureSession::close_locked() noexcept {
+    // Runs on the session's strand. Cancel pending async operations so their
+    // completion handlers observe operation_aborted and do not re-arm reads or
+    // writes or touch the session.
+    boost::system::error_code ec;
+    ssl_stream_.next_layer().cancel(ec);
+    // Do NOT perform a blocking TLS shutdown here: the peer may be shutting
+    // down simultaneously and not reciprocate the close-notify, which would
+    // block this io thread (and deadlock mutual shutdown). Just close the
+    // transport; the peer detects EOF on its read loop and closes its side.
+    ssl_stream_.next_layer().close(ec);
+    if (on_session_closed_) on_session_closed_(shared_from_this());
+}
+
+bool SecureSession::is_open() const noexcept {
+    return !closed_.load(std::memory_order_acquire) &&
+           ssl_stream_.next_layer().is_open();
+}
+
+std::size_t SecureSession::send_message(std::uint16_t message_type,
+                                         const Bytes& payload,
+                                         boost::system::error_code& ec) noexcept {
+    ec = boost::system::error_code{};
+    if (!is_authenticated()) {
+        ec = boost::system::errc::make_error_code(boost::system::errc::not_a_stream);
+        return 0;
+    }
+    if (payload.size() > kMaxMessageBytes) {
+        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
+        return 0;
+    }
+    // Best-effort backpressure signal: if the queue is already full, reject
+    // without enqueuing. The authoritative check (under strand serialization)
+    // happens again in enqueue_and_drain, which drops on persistent overflow.
+    if (write_queue_size_.load(std::memory_order_acquire) >= write_queue_max_) {
+        ec = boost::system::errc::make_error_code(boost::system::errc::no_buffer_space);
+        return 0;
+    }
+
+    Bytes frame = build_frame(message_type, payload);
+    // Post the enqueue to the strand; the actual ssl_stream_ write is initiated
+    // from the strand, so no caller thread ever touches the OpenSSL stream.
+    boost::asio::post(strand_, [self = shared_from_this(),
+                                frame = std::move(frame)]() mutable {
+        self->enqueue_and_drain(std::move(frame));
+    });
+    return payload.size();
+}
+
+void SecureSession::start_receive(FrameHandler handler) {
+    frame_handler_ = std::move(handler);
+    boost::asio::post(strand_, [self = shared_from_this()]() {
+        self->read_header();
+    });
+}
+
+Bytes SecureSession::build_frame(std::uint16_t message_type, const Bytes& payload) const {
+    Bytes frame;
+    frame.reserve(kFrameHeaderBytes + payload.size());
+    std::uint32_t length = static_cast<std::uint32_t>(payload.size());
+    frame.push_back(static_cast<Byte>((length >> 24) & 0xff));
+    frame.push_back(static_cast<Byte>((length >> 16) & 0xff));
+    frame.push_back(static_cast<Byte>((length >> 8) & 0xff));
+    frame.push_back(static_cast<Byte>(length & 0xff));
+    frame.push_back(static_cast<Byte>((message_type >> 8) & 0xff));
+    frame.push_back(static_cast<Byte>(message_type & 0xff));
+    Hash checksum = crypto::sha256(payload);
+    frame.insert(frame.end(), checksum.begin(), checksum.end());
+    frame.insert(frame.end(), payload.begin(), payload.end());
+    return frame;
+}
+
+//------------------------------------------------------------------------------
+// Write queue (all operations run on the session's strand)
+//------------------------------------------------------------------------------
+
+void SecureSession::enqueue_and_drain(Bytes frame) {
+    if (closed_.load(std::memory_order_acquire)) return;
+    if (write_queue_size_.load(std::memory_order_acquire) >= write_queue_max_) {
+        // Persistent backpressure: drop the frame to keep memory bounded.
+        return;
+    }
+    write_queue_.push_back(WriteItem{0, std::move(frame)});
+    write_queue_size_.fetch_add(1, std::memory_order_release);
+    if (!write_draining_) {
+        write_draining_ = true;
+        write_next();
+    }
+}
+
+void SecureSession::write_next() {
+    if (closed_.load(std::memory_order_acquire)) {
+        write_draining_ = false;
+        return;
+    }
+    if (write_queue_.empty()) {
+        write_draining_ = false;
+        return;
+    }
+    WriteItem item = std::move(write_queue_.front());
+    write_queue_.pop_front();
+
+    // The payload must remain valid for the lifetime of the async_write op,
+    // so it is owned by a shared_ptr captured by the completion handler. The
+    // buffer references that shared-owned data; there is no move-from-local
+    // hazard because the shared_ptr is captured by copy, not moved from the
+    // object whose address the buffer references.
+    auto shared_payload = std::make_shared<Bytes>(std::move(item.payload));
+    auto write_buffer = boost::asio::buffer(*shared_payload);
+    boost::asio::async_write(ssl_stream_, std::move(write_buffer),
+        boost::asio::bind_executor(strand_,
+            [self = shared_from_this(), shared_payload](const boost::system::error_code& ec,
+                                                        std::size_t) mutable {
+                (void)shared_payload;
+                self->write_queue_size_.fetch_sub(1, std::memory_order_release);
+                if (ec) {
+                    self->close_locked();
+                    return;
+                }
+                bool more = !self->write_queue_.empty();
+                if (more) {
+                    self->write_draining_ = true;
+                    self->write_next();
+                } else {
+                    self->write_draining_ = false;
+                }
+            }));
+}
+
+void SecureSession::on_write_complete(std::shared_ptr<Bytes> /*payload*/,
+                                       const boost::system::error_code& /*ec*/,
+                                       std::size_t /*n*/) {}
+
+//------------------------------------------------------------------------------
+// Read loop (all operations run on the session's strand)
+//------------------------------------------------------------------------------
+
+void SecureSession::read_header() {
+    if (closed_.load(std::memory_order_acquire)) return;
+    auto header = std::make_shared<std::array<Byte, kFrameHeaderBytes>>();
+    boost::asio::async_read(ssl_stream_, boost::asio::buffer(*header),
+        boost::asio::bind_executor(strand_,
+            [self = shared_from_this(), header](const boost::system::error_code& ec,
+                                                std::size_t) mutable {
+                (void)header;
+                if (ec) { self->on_read_error(ec); return; }
+                std::uint32_t length =
+                    (static_cast<std::uint32_t>((*header)[0]) << 24) |
+                    (static_cast<std::uint32_t>((*header)[1]) << 16) |
+                    (static_cast<std::uint32_t>((*header)[2]) << 8) |
+                    static_cast<std::uint32_t>((*header)[3]);
+                if (length > kMaxMessageBytes) {
+                    self->on_read_error(
+                        boost::system::errc::make_error_code(boost::system::errc::message_size));
+                    return;
+                }
+                std::uint16_t message_type = static_cast<std::uint16_t>(
+                    (static_cast<std::uint16_t>((*header)[4]) << 8) |
+                    (*header)[5]);
+                Hash expected_checksum{};
+                std::copy(header->begin() + 6, header->begin() + 38,
+                          expected_checksum.begin());
+                self->read_payload(message_type, length, std::move(expected_checksum));
+            }));
+}
+
+void SecureSession::read_payload(std::uint16_t message_type,
+                                  std::uint32_t length,
+                                  Hash expected_checksum) {
+    if (closed_.load(std::memory_order_acquire)) return;
+    auto buffer = std::make_shared<std::vector<Byte>>(length);
+    boost::asio::async_read(ssl_stream_, boost::asio::buffer(*buffer),
+        boost::asio::bind_executor(strand_,
+            [self = shared_from_this(), buffer, message_type,
+             expected_checksum = std::move(expected_checksum)](
+                const boost::system::error_code& ec, std::size_t) mutable {
+                (void)buffer;
+                if (ec) { self->on_read_error(ec); return; }
+                Hash actual = crypto::sha256(*buffer);
+                if (actual != expected_checksum) {
+                    self->on_read_error(
+                        boost::system::errc::make_error_code(boost::system::errc::protocol_error));
+                    return;
+                }
+                self->deliver_frame(message_type, std::move(*buffer));
+            }));
+}
+
+void SecureSession::deliver_frame(std::uint16_t message_type, Bytes payload) {
+    if (closed_.load(std::memory_order_acquire)) return;
+    if (!frame_handler_) {
+        boost::system::error_code ec;
+        close(ec);
+        return;
+    }
+    boost::system::error_code ec;
+    frame_handler_(shared_from_this(), message_type, std::move(payload), ec);
+    if (ec) {
+        close(ec);
+        return;
+    }
+    if (!closed_.load(std::memory_order_acquire)) {
+        read_header();
+    }
+}
+
+void SecureSession::on_read_error(const boost::system::error_code& ec) {
+    // A read error closes the session (strand-bound, idempotent) and fires
+    // on_session_closed_ so the runtime removes the session from admission.
+    boost::system::error_code ignore;
+    close(ignore);
+    (void)ec;
+}
+
+//------------------------------------------------------------------------------
+// Handshake
+//------------------------------------------------------------------------------
 
 void SecureSession::async_accept(Handler handler,
                                   std::optional<NodeId> expected_peer_node_id) {
@@ -234,32 +459,20 @@ void SecureSession::async_accept(Handler handler,
                     der_len = i2d_X509(cert, &ptr);
                     der.resize(static_cast<std::size_t>(der_len));
                     live_tls_cert_hash_ = crypto::sha256(der);
-                    live_tls_cert_hash_known_ = true;
+                    live_tls_cert_hash_known_.store(true, std::memory_order_release);
                 }
             }
             return true;
         });
 
+    auto self = shared_from_this();
     ssl_stream_.async_handshake(boost::asio::ssl::stream_base::server,
-        [this, handler = std::move(handler),
-         expected_peer_node_id](const boost::system::error_code& ec) mutable {
-            if (ec) { handler(ec, {}); return; }
-do_send_handshake([this, handler = std::move(handler),
-                       expected_peer_node_id](const boost::system::error_code& ec2,
-                                              SecureHandshakeResult /*result*/) mutable {
-                if (ec2) { handler(ec2, {}); return; }
-                do_receive_handshake([this, handler = std::move(handler),
-                                      expected_peer_node_id](const boost::system::error_code& ec3,
-                                                             SecureHandshakeResult peer_result) mutable {
-                    if (ec3) { handler(ec3, {}); return; }
-                    do_verify_handshake(peer_result, expected_peer_node_id,
-                                        [handler = std::move(handler)](const boost::system::error_code& ec4,
-                                                                        SecureHandshakeResult result) {
-                                            handler(ec4, result);
-                                        });
-                });
-            });
-        });
+        boost::asio::bind_executor(strand_,
+            [self, handler = std::move(handler),
+             expected_peer_node_id](const boost::system::error_code& ec) mutable {
+                if (ec) { handler(ec, {}); return; }
+                self->do_send_handshake(std::move(handler), expected_peer_node_id);
+            }));
 }
 
 void SecureSession::async_connect(const std::string& host,
@@ -267,134 +480,60 @@ void SecureSession::async_connect(const std::string& host,
                                    Handler handler,
                                    std::optional<NodeId> expected_peer_node_id) {
     auto resolver = std::make_shared<boost::asio::ip::tcp::resolver>(io_);
+    auto self = shared_from_this();
     resolver->async_resolve(host, std::to_string(port),
-        [this, resolver = std::move(resolver), handler = std::move(handler),
-         expected_peer_node_id](const boost::system::error_code& ec,
-                                boost::asio::ip::tcp::resolver::results_type endpoints) mutable {
-            if (ec) { handler(ec, {}); return; }
-            boost::asio::async_connect(ssl_stream_.next_layer(), endpoints,
-                [this, handler = std::move(handler),
-                 expected_peer_node_id](const boost::system::error_code& ec2,
-                                         const boost::asio::ip::tcp::endpoint&) mutable {
-                    if (ec2) { handler(ec2, {}); return; }
-                    ssl_stream_.next_layer().set_option(boost::asio::ip::tcp::no_delay(true));
-                    ssl_stream_.set_verify_mode(boost::asio::ssl::verify_peer |
-                                                boost::asio::ssl::context::verify_fail_if_no_peer_cert);
-                    ssl_stream_.set_verify_callback(
-                        [this](bool /*preverified*/, boost::asio::ssl::verify_context& ctx) -> bool {
-                            X509* cert = X509_STORE_CTX_get_current_cert(ctx.native_handle());
-                            if (cert) {
-                                int der_len = i2d_X509(cert, nullptr);
-                                if (der_len > 0) {
-                                    Bytes der(static_cast<std::size_t>(der_len));
-                                    unsigned char* ptr = der.data();
-                                    der_len = i2d_X509(cert, &ptr);
-                                    der.resize(static_cast<std::size_t>(der_len));
-                                    live_tls_cert_hash_ = crypto::sha256(der);
-                                    live_tls_cert_hash_known_ = true;
-                                }
-                            }
-                            return true;
-                        });
-                    ssl_stream_.async_handshake(boost::asio::ssl::stream_base::client,
-                        [this, handler = std::move(handler),
-                         expected_peer_node_id](const boost::system::error_code& ec3) mutable {
-                            if (ec3) { handler(ec3, {}); return; }
-do_send_handshake([this, handler = std::move(handler),
-                       expected_peer_node_id](const boost::system::error_code& ec4,
-                                              SecureHandshakeResult /*result*/) mutable {
-                                if (ec4) { handler(ec4, {}); return; }
-                                do_receive_handshake([this, handler = std::move(handler),
-                                                      expected_peer_node_id](const boost::system::error_code& ec5,
-                                                                             SecureHandshakeResult peer_result) mutable {
-                                    if (ec5) { handler(ec5, {}); return; }
-                                    do_verify_handshake(peer_result, expected_peer_node_id,
-                                        [handler = std::move(handler)](const boost::system::error_code& ec6,
-                                                                        SecureHandshakeResult result) {
-                                            handler(ec6, result);
-                                        });
+        boost::asio::bind_executor(strand_,
+            [self, resolver = std::move(resolver), handler = std::move(handler),
+             expected_peer_node_id](const boost::system::error_code& ec,
+                                    boost::asio::ip::tcp::resolver::results_type endpoints) mutable {
+                (void)self;
+                if (ec) { handler(ec, {}); return; }
+                boost::asio::async_connect(self->ssl_stream_.next_layer(), endpoints,
+                    boost::asio::bind_executor(self->strand_,
+                        [self, handler = std::move(handler),
+                         expected_peer_node_id](const boost::system::error_code& ec2,
+                                                 const boost::asio::ip::tcp::endpoint&) mutable {
+                            if (ec2) { handler(ec2, {}); return; }
+                            self->ssl_stream_.next_layer().set_option(
+                                boost::asio::ip::tcp::no_delay(true));
+                            self->ssl_stream_.set_verify_mode(
+                                boost::asio::ssl::verify_peer |
+                                boost::asio::ssl::context::verify_fail_if_no_peer_cert);
+                            self->ssl_stream_.set_verify_callback(
+                                [self](bool /*preverified*/,
+                                       boost::asio::ssl::verify_context& ctx) -> bool {
+                                    X509* cert = X509_STORE_CTX_get_current_cert(ctx.native_handle());
+                                    if (cert) {
+                                        int der_len = i2d_X509(cert, nullptr);
+                                        if (der_len > 0) {
+                                            Bytes der(static_cast<std::size_t>(der_len));
+                                            unsigned char* ptr = der.data();
+                                            der_len = i2d_X509(cert, &ptr);
+                                            der.resize(static_cast<std::size_t>(der_len));
+                                            self->live_tls_cert_hash_ = crypto::sha256(der);
+                                            self->live_tls_cert_hash_known_.store(
+                                                true, std::memory_order_release);
+                                        }
+                                    }
+                                    return true;
                                 });
-                            });
-                        });
-                });
-        });
+                            self->ssl_stream_.async_handshake(
+                                boost::asio::ssl::stream_base::client,
+                                boost::asio::bind_executor(self->strand_,
+                                    [self, handler = std::move(handler),
+                                     expected_peer_node_id](const boost::system::error_code& ec3) mutable {
+                                        if (ec3) { handler(ec3, {}); return; }
+                                        self->do_send_handshake(std::move(handler),
+                                                                expected_peer_node_id);
+                                    }));
+                        }));
+            }));
 }
 
-void SecureSession::close(boost::system::error_code& ec) noexcept {
-    // Shut down the underlying transport rather than performing a TLS-level
-    // close_notify handshake. A TLS shutdown would block waiting for a peer
-    // that may not reciprocate, and would race with a dispatch worker that is
-    // blocked in a synchronous read on this same stream. A transport shutdown
-    // unblocks any blocked read/write and never waits on the peer.
-    ssl_stream_.next_layer().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    ssl_stream_.next_layer().close(ec);
-}
+void SecureSession::do_send_handshake(Handler handler,
+                                       std::optional<NodeId> expected_peer_node_id) {
+    (void)expected_peer_node_id; // verified in do_verify_handshake
 
-bool SecureSession::is_open() const noexcept {
-    return ssl_stream_.next_layer().is_open();
-}
-
-std::size_t SecureSession::send_message(std::uint16_t message_type,
-                                         const Bytes& payload,
-                                         boost::system::error_code& ec) noexcept {
-    if (payload.size() > kMaxMessageBytes) {
-        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        return 0;
-    }
-    Bytes frame;
-    frame.reserve(kFrameHeaderBytes + payload.size());
-    std::uint32_t length = static_cast<std::uint32_t>(payload.size());
-    frame.push_back(static_cast<Byte>((length >> 24) & 0xff));
-    frame.push_back(static_cast<Byte>((length >> 16) & 0xff));
-    frame.push_back(static_cast<Byte>((length >> 8) & 0xff));
-    frame.push_back(static_cast<Byte>(length & 0xff));
-    frame.push_back(static_cast<Byte>((message_type >> 8) & 0xff));
-    frame.push_back(static_cast<Byte>(message_type & 0xff));
-    Hash checksum = crypto::sha256(payload);
-    frame.insert(frame.end(), checksum.begin(), checksum.end());
-    frame.insert(frame.end(), payload.begin(), payload.end());
-
-    boost::asio::write(ssl_stream_, boost::asio::buffer(frame.data(), frame.size()), ec);
-    if (!ec) return frame.size();
-    return 0;
-}
-
-std::size_t SecureSession::receive_message(std::uint16_t& message_type,
-                                            Bytes& payload,
-                                            boost::system::error_code& ec) noexcept {
-    std::array<Byte, kFrameHeaderBytes> header{};
-    boost::asio::read(ssl_stream_, boost::asio::buffer(header), ec);
-    if (ec) return 0;
-
-    std::uint32_t length = (static_cast<std::uint32_t>(header[0]) << 24) |
-                           (static_cast<std::uint32_t>(header[1]) << 16) |
-                           (static_cast<std::uint32_t>(header[2]) << 8) |
-                           static_cast<std::uint32_t>(header[3]);
-    if (length > kMaxMessageBytes) {
-        ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        return 0;
-    }
-    message_type = static_cast<std::uint16_t>((static_cast<std::uint16_t>(header[4]) << 8) |
-                                               header[5]);
-
-    Hash expected_checksum{};
-    std::copy(header.begin() + 6, header.begin() + 38, expected_checksum.begin());
-
-    payload.resize(length);
-    if (!payload.empty()) {
-        boost::asio::read(ssl_stream_, boost::asio::buffer(payload), ec);
-        if (ec) return 0;
-    }
-
-    Hash actual = crypto::sha256(payload);
-    if (actual != expected_checksum) {
-        ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return 0;
-    }
-    return payload.size();
-}
-
-void SecureSession::do_send_handshake(Handler handler) {
     SignedNodeRecord record{};
     record.format_version = 1;
     record.network_identifier = context_.network_identifier();
@@ -451,54 +590,62 @@ void SecureSession::do_send_handshake(Handler handler) {
     frame.push_back(static_cast<Byte>(length & 0xff));
     frame.insert(frame.end(), handshake.begin(), handshake.end());
 
-    // The async_write buffer and the completion handler's ownership of the frame
-    // must be established without relying on argument evaluation order. If the
-    // move-into-lambda capture were evaluated before buffer(frame.data(), ...) the
-    // buffer would reference moved-from storage (nullptr, 0) and async_write would
-    // complete with success while writing zero bytes, leaving the peer's read
-    // blocked forever. Establish the buffer first, then move the frame into the
-    // handler so the buffer remains valid for the lifetime of the async operation.
-    auto write_buffer = boost::asio::buffer(frame);
+    auto shared_frame = std::make_shared<std::vector<Byte>>(std::move(frame));
+    auto write_buffer = boost::asio::buffer(*shared_frame);
     boost::asio::async_write(ssl_stream_, std::move(write_buffer),
-        [this, frame = std::move(frame), handler = std::move(handler),
-         session_nonce](const boost::system::error_code& ec, std::size_t) mutable {
-            (void)frame;
-            if (ec) { handler(ec, {}); return; }
-            // Record our session nonce so it survives until the peer's handshake
-            // is received and verified by the caller (async_accept/async_connect).
-            handshake_result_.session_nonce = session_nonce;
-            handler(boost::system::error_code{}, {});
-        });
+        boost::asio::bind_executor(strand_,
+            [self = shared_from_this(), shared_frame, handler = std::move(handler),
+             expected_peer_node_id](const boost::system::error_code& ec, std::size_t) mutable {
+                (void)shared_frame;
+                if (ec) { handler(ec, {}); return; }
+                // The send side is complete. Receive the peer's handshake frame,
+                // verify it, and only then deliver the fully populated handshake
+                // result to the final handler. Delivering an empty result here
+                // (as the old code did) left peer_node_id empty, which made
+                // PeerLifecycle construction throw in on_connect().
+                self->do_receive_handshake([self, handler = std::move(handler),
+                                             expected_peer_node_id](
+                                                const boost::system::error_code& ec2,
+                                                SecureHandshakeResult parsed) mutable {
+                    if (ec2) { handler(ec2, {}); return; }
+                    self->do_verify_handshake(parsed, expected_peer_node_id,
+                                              std::move(handler));
+                });
+            }));
 }
 
 void SecureSession::do_receive_handshake(Handler handler) {
+    auto self = shared_from_this();
     auto length_header = std::make_shared<std::array<Byte, 4>>();
     boost::asio::async_read(ssl_stream_, boost::asio::buffer(*length_header),
-        [this, handler = std::move(handler), length_header](const boost::system::error_code& ec, std::size_t) mutable {
-            if (ec) { handler(ec, {}); return; }
-            std::size_t expected = (static_cast<std::size_t>((*length_header)[0]) << 24) |
-                                   (static_cast<std::size_t>((*length_header)[1]) << 16) |
-                                   (static_cast<std::size_t>((*length_header)[2]) << 8) |
-                                   static_cast<std::size_t>((*length_header)[3]);
-            if (expected > kMaxMessageBytes) {
-                handler(boost::system::errc::make_error_code(boost::system::errc::message_size), {});
-                return;
-            }
-            std::vector<Byte> buffer(expected);
-            // Same argument-evaluation-order hazard as do_send_handshake: build
-            // the read buffer before moving the storage into the completion
-            // handler so the async_read cannot reference moved-from memory.
-            auto read_buffer = boost::asio::buffer(buffer);
-            boost::asio::async_read(ssl_stream_, std::move(read_buffer),
-                [handler = std::move(handler), buffer = std::move(buffer)](
-                    const boost::system::error_code& ec2, std::size_t) mutable {
-                    if (ec2) { handler(ec2, {}); return; }
-                    SecureHandshakeResult parsed_result;
-                    auto parse_ec = parse_handshake_message(buffer, parsed_result);
-                    if (parse_ec) { handler(parse_ec, {}); return; }
-                    handler(boost::system::error_code{}, std::move(parsed_result));
-                });
-        });
+        boost::asio::bind_executor(strand_,
+            [self, handler = std::move(handler), length_header](
+                const boost::system::error_code& ec, std::size_t) mutable {
+                (void)length_header;
+                if (ec) { handler(ec, {}); return; }
+                std::size_t expected =
+                    (static_cast<std::size_t>((*length_header)[0]) << 24) |
+                    (static_cast<std::size_t>((*length_header)[1]) << 16) |
+                    (static_cast<std::size_t>((*length_header)[2]) << 8) |
+                    static_cast<std::size_t>((*length_header)[3]);
+                if (expected > kMaxMessageBytes) {
+                    handler(boost::system::errc::make_error_code(boost::system::errc::message_size), {});
+                    return;
+                }
+                auto buffer = std::make_shared<std::vector<Byte>>(expected);
+                auto read_buffer = boost::asio::buffer(*buffer);
+                boost::asio::async_read(self->ssl_stream_, std::move(read_buffer),
+                    boost::asio::bind_executor(self->strand_,
+                        [self, handler = std::move(handler), buffer](
+                            const boost::system::error_code& ec2, std::size_t) mutable {
+                            (void)buffer;
+                            if (ec2) { handler(ec2, {}); return; }
+                            SecureHandshakeResult parsed_result;
+                            auto parse_ec = SecureSession::parse_handshake_message(*buffer, parsed_result);
+                            if (parse_ec) { handler(parse_ec, {}); return; }
+                            handler(boost::system::error_code{}, std::move(parsed_result));
+                        }));
+            }));
 }
 
 void SecureSession::do_verify_handshake(const SecureHandshakeResult& result,
@@ -512,7 +659,7 @@ void SecureSession::do_verify_handshake(const SecureHandshakeResult& result,
         handler(boost::system::errc::make_error_code(boost::system::errc::protocol_error), {});
         return;
     }
-    if (!live_tls_cert_hash_known_) {
+    if (!live_tls_cert_hash_known_.load(std::memory_order_acquire)) {
         handler(boost::system::errc::make_error_code(boost::system::errc::protocol_error), {});
         return;
     }
@@ -521,10 +668,14 @@ void SecureSession::do_verify_handshake(const SecureHandshakeResult& result,
         return;
     }
 
-    authenticated_ = true;
     handshake_result_ = result;
+    authenticated_.store(true, std::memory_order_release);
     handler(boost::system::error_code{}, result);
 }
+
+//------------------------------------------------------------------------------
+// Handshake message construction / parsing (test-accessible)
+//------------------------------------------------------------------------------
 
 boost::system::error_code SecureSession::build_handshake_message(const SecureSessionContext& ctx,
                                                                   const KeyProvider& identity,

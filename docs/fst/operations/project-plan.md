@@ -482,13 +482,13 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 | Cross-cutting | 9 | 0 | 0 | 9 | 0 | 0 | 0 |
 | **Total** | **74** | **36** | **4** | **13** | **0** | **0** | **21** |
 
-**Active work:** Phases 0–2 are COMPLETE (verified per ordering constraint). Phase 3 and Phase 4 are UNBLOCKED: owner decisions D-015, D-016, D-017, D-037 are APPROVED and recorded via ADRs ADR-0002/ADR-0003/ADR-0004/ADR-0005. Current focus: fixing Release-mode timing failures (FST-BUG-0017), ASan CometBFT integration abort, and test binary hang after CometBFT tests.
+**Active work:** Phases 0–2 are COMPLETE (verified per ordering constraint). Phase 3 and Phase 4 are UNBLOCKED: owner decisions D-015, D-016, D-017, D-037 are APPROVED and recorded via ADRs ADR-0002/ADR-0003/ADR-0004/ADR-0005. Current focus: completing implementation and integration (Phase 1 of new development priority), bringing the async TLS I/O strand-based redesign to a coherent checkpoint, building all project targets, and establishing a project-wide verification baseline. Known defects (FST-BUG-0014/0015/0017) are deferred to Phase 4 (dedicated debugging) per the new development priority — not actively debugged during Phases 1–2.
 
 **Blocked work:** None — Phases 3–4 unblocked by owner decisions. CometBFT production dependency remains subject to mandatory feasibility validation before production commitment.
 
 **Deferred work:** Phases 5–10 (20 requirements) correctly deferred per P13 (core network first).
 
-**Next engineering task:** Fix FST-BUG-0017 Release-mode harness timing failures using correct synchronization (polling-based waits instead of fixed sleeps). Then diagnose and fix the ASan CometBFT integration abort. Then fix test-process shutdown hangs after CometBFT tests. Then execute TSan and investigate its findings.
+**Next engineering task:** Update all four operation records with build/test evidence (all 5 presets build; debug 343/343 PASS; release/asan/clang-release/tsan known issues deferred). Commit the async TLS I/O integration as a coherent checkpoint. Then execute Phase 2 verification (demos, benchmarks, raft labs, all build configs) and Phase 3 deferral of known defects.
 
 ---
 

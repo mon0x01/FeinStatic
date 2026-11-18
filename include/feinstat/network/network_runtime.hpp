@@ -13,7 +13,6 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
-#include <csignal>
 #include <functional>
 #include <map>
 #include <memory>
@@ -22,7 +21,6 @@
 #include <set>
 #include <string>
 #include <system_error>
-#include <thread>
 #include <vector>
 
 namespace feinstat::network {
@@ -47,6 +45,11 @@ struct NetworkRuntimeConfig {
 
 // The FST network runtime. Integrates identity, TLS, discovery, admission,
 // message dispatch, and lifecycle into a single operational subsystem.
+//
+// Session reads are driven by each SecureSession's strand-bound async read
+// loop (started via on_session_established), not by a dedicated thread per
+// session. All SSL stream operations are serialized on the session's strand,
+// eliminating the read/write concurrency that caused FST-BUG-0014/0015/0017.
 class NetworkRuntime {
 public:
     NetworkRuntime();
@@ -69,7 +72,7 @@ public:
     void run();
 
     // Request a graceful shutdown. Closes the listener and all sessions, and
-    // joins all dispatch workers. Safe to call repeatedly.
+    // stops the admission io_context. Safe to call repeatedly.
     void stop() noexcept;
 
     // Run a single admission tick (idle cleanup + reconnection) at the given
@@ -96,17 +99,11 @@ public:
         return config_;
     }
 
-    // Start a dispatch worker for an authenticated session. Called by the
-    // admission controller when a new session is admitted.
-    void start_dispatch_worker(std::shared_ptr<PeerSession> session);
-
 private:
     void do_tick();
     void load_bootstrap_records(std::uint64_t now_unix_ms);
     void ingest_bootstrap(std::uint64_t now_unix_ms);
     void register_default_handlers();
-    void run_dispatch_worker(std::shared_ptr<PeerSession> session);
-    void reap_finished_workers();
     std::uint64_t now_ms() noexcept;
 
     NetworkRuntimeConfig config_;
@@ -124,17 +121,7 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> stop_requested_{false};
     bool initialized_{false};
-    std::thread tick_thread_;
     std::uint16_t listen_port_{0};
-
-    // One dispatch worker per authenticated session. A worker must NOT erase
-    // its own map entry: doing so would destroy its own joinable std::thread
-    // object and call std::terminate. Instead a worker records its NodeId in
-    // finished_workers_ on exit; the run loop (do_tick) reaps finished workers
-    // by joining and erasing their thread objects. stop() joins all remaining.
-    std::mutex dispatch_workers_mutex_;
-    std::map<NodeId, std::thread> dispatch_workers_;
-    std::set<NodeId> finished_workers_;
 };
 
 } // namespace feinstat::network

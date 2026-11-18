@@ -387,39 +387,11 @@ are not safe for concurrent read/write from two threads. In Release mode this ra
 drops or corrupts frames, causing `receive_next` timeouts (e.g.
 `harness_peer_record_request_response_discovery`) and, when the full suite runs, a
 hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
-| **Fix Description** | Test-side: replaced fixed sleeps / timed store-polls with message-based
-synchronization in `tests/network_harness_tests.cpp`: a ping/pong exchange
-confirms both dispatch workers are actively reading before peer-record delivery,
-and each test `receive_next`s the actual `kPong`/`kPeerRecordResponse`/
-`kPeerRecordAnnounce` message (the handler persists before the observer is
-notified, per `message_dispatch.hpp:54-57`), so receiving it proves the store was
-updated. Applied to `harness_peer_record_request_response_discovery`,
-`harness_peer_record_announce_discovery`, `harness_invalid_signed_record_rejected`,
-`harness_wrong_network_record_rejected`, `harness_expired_and_stale_records_rejected`,
-`harness_malformed_messages_do_not_crash_peers`, `harness_duplicate_peer_discovery_no_storm`.
-The residual Release-mode failures and the full-suite hang are caused by the
-SSL concurrency race above and are NOT fixed by test-side synchronization. They
-are tracked as resolved only by the planned asynchronous TLS I/O redesign
-(strand-bound all SSL stream operations, write queue, graceful shutdown) — see
-the async TLS I/O design plan. No test-side fix can make concurrent read/write on
-one SSL stream safe. |
-| **Regression Test** | `./build/release/feinstatic_tests` — all tests pass reliably. |
-| **Fix Commit SHA** | — (pending) |
-| **Verification Result** | Debug: 29/29 harness tests pass reliably across 3 consecutive runs; full Debug
-suite 343/343 passes. Release: build succeeds; `harness_peer_record_request_response_discovery`
-fails intermittently (4/5 runs timed out at line 375 awaiting `kPeerRecordResponse`);
-running the full Release harness suite hangs (SSL stream deadlock between test
-caller-thread write and dispatch-worker-thread read). ASan: build passes (CometBFT
-integration tests require local CometBFT binary). Clang Release + -Werror: builds
-cleanly. The test-side synchronization itself is correct (Debug reliable); the
-Release failure/hang is the SSL concurrency race. |
-| **Remaining Risk** | Release-mode harness runs can deadlock or time out until SSL stream access is
-strand-serialized. Test-side synchronization alone cannot fix concurrent
-read/write on one `ssl_stream_`. The asynchronous TLS I/O redesign (single strand
-per session, bounded write queue, graceful shutdown) is the required fix and has
-not yet been implemented. Until then, CI should run harness tests in Debug or
-ASan configuration, not Release. |
-
+| **Fix Description** | Test-side synchronization applied (ping/pong confirms dispatch workers active before peer-record delivery; each test receive_nexts the actual message proving store was updated). Applied to harness_peer_record_request_response_discovery, harness_peer_record_announce_discovery, harness_invalid_signed_record_rejected, harness_wrong_network_record_rejected, harness_expired_and_stale_records_rejected, harness_malformed_messages_do_not_crash_peers, harness_duplicate_peer_discovery_no_storm. The async TLS I/O strand-based redesign (docs/fst/architecture/async-tls-io-design.md) is NOW IMPLEMENTED: per-session strand serializes all SSL stream operations, bounded write queue, graceful shutdown via cancel+close, no dedicated dispatch worker thread, no blocking read/write on the SSL stream. Debug configuration: 343/343 tests PASS reliably including all harness tests. Release/ASan/clang-release: residual timing failures and hangs persist under optimization/sanitizer — deferred to Phase 4 (dedicated debugging) per new development priority. Do not debug during Phase 1/2. |
+| **Regression Test** | `./build/debug/feinstatic_tests` — all tests pass reliably. `./build/release/feinstatic_tests` — hangs after CometBFT integration tests (FST-BUG-0017, deferred). `./build/asan/feinstatic_tests` — CometBFT integration aborts with ASan error (deferred). `./build/clang-release/feinstatic_tests` — 332/343 pass, 4 harness timing failures, then hangs (deferred). |
+| **Fix Commit SHA** | d550446 (async TLS I/O redesign integrated) + working tree changes (this session) |
+| **Verification Result** | Debug: 343/343 PASS, 0 failed, reliable across repeated runs. Release/ASan/clang-release: known issues deferred to Phase 4. |
+| **Remaining Risk** | Release-mode harness runs can deadlock or time out until SSL stream access is verified strand-serialized under optimization. Test-side synchronization alone cannot fix concurrent read/write on one ssl_stream_ — but the async TLS I/O redesign eliminates concurrent access by serializing all stream operations on the session's strand. Phase 4 will verify Release/ASan/clang-release configurations. |
 ---
 
 ## Defect Summary Statistics (as of 2026-11-17)

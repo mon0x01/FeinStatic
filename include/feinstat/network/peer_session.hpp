@@ -52,12 +52,6 @@ public:
         return session_->send_message(message_type, payload, ec);
     }
 
-    std::size_t receive_message(std::uint16_t& message_type,
-                                Bytes& payload,
-                                boost::system::error_code& ec) noexcept {
-        return session_->receive_message(message_type, payload, ec);
-    }
-
     void close(boost::system::error_code& ec) noexcept { session_->close(ec); }
 
 private:

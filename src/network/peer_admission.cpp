@@ -50,12 +50,27 @@ void AdmissionController::stop() noexcept {
     running_ = false;
     boost::system::error_code ec;
     if (acceptor_) acceptor_->close(ec);
+    // Snapshot the sessions under the lock, then close each transport socket
+    // synchronously so that peers observe EOF even if the io_context is stopped
+    // before the strand-bound close_locked handlers can be dispatched. The old
+    // approach posted close() to the strand and then stopped the io_context,
+    // which left close_locked (and thus the socket close) from ever running,
+    // so the peer's read loop never saw EOF and shutdown hung.
+    std::vector<std::shared_ptr<PeerSession>> sessions;
     {
-    std::unique_lock<std::mutex> lock(sessions_mutex_);
+        std::lock_guard<std::mutex> lock(sessions_mutex_);
+        sessions.reserve(sessions_.size());
         for (auto& [id, entry] : sessions_) {
-            entry.session->close(ec);
+            sessions.push_back(entry.session);
         }
         sessions_.clear();
+        inbound_count_.store(0, std::memory_order_release);
+        outbound_count_.store(0, std::memory_order_release);
+    }
+    for (auto& s : sessions) {
+        boost::system::error_code close_ec;
+        s->secure_session().socket().cancel(close_ec);
+        s->secure_session().socket().close(close_ec);
     }
     io_.stop();
     if (io_thread_.joinable()) io_thread_.join();

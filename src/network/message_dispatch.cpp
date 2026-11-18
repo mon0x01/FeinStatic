@@ -164,36 +164,32 @@ std::size_t MessageDispatcher::send(std::shared_ptr<PeerSession> session,
         return 0;
     }
     // Application-level size/type validation is enforced by the receiver in
-    // dispatch() at the trust boundary; the transport layer (send_message)
+    // handle_frame() at the trust boundary; the transport layer (send_message)
     // rejects any frame exceeding kMaxMessageBytes. The sender does not
     // pre-reject application payloads so that receiver-side rejection (and the
     // resulting session close) remains observable end-to-end.
     return session->send_message(static_cast<std::uint16_t>(type), payload, ec);
 }
 
-std::size_t MessageDispatcher::dispatch(std::shared_ptr<PeerSession> session,
-                                         boost::system::error_code& ec) noexcept {
+void MessageDispatcher::handle_frame(std::shared_ptr<PeerSession> session,
+                                      PeerMessageType type,
+                                      const Bytes& payload,
+                                      boost::system::error_code& ec) noexcept {
+    ec = boost::system::error_code{};
     if (!session || !session->is_authenticated()) {
         ec = boost::system::errc::make_error_code(boost::system::errc::not_a_stream);
-        return 0;
+        return;
     }
-
-    std::uint16_t raw_type{0};
-    Bytes payload;
-    std::size_t received = session->receive_message(raw_type, payload, ec);
-    if (ec || received == 0) return received;
-
-    PeerMessageType type = static_cast<PeerMessageType>(raw_type);
 
     if (validate_message(type, payload) != 0) {
         ec = boost::system::errc::make_error_code(boost::system::errc::message_size);
-        return 0;
+        return;
     }
 
     auto it = handlers_.find(type);
     if (it == handlers_.end()) {
         ec = boost::system::errc::make_error_code(boost::system::errc::protocol_error);
-        return 0;
+        return;
     }
 
     it->second(session, type, payload, ec);
@@ -202,7 +198,6 @@ std::size_t MessageDispatcher::dispatch(std::shared_ptr<PeerSession> session,
             observer(session, type, payload);
         }
     }
-    return received;
 }
 
 std::size_t MessageDispatcher::ping(std::shared_ptr<PeerSession> session,

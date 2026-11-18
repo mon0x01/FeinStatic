@@ -139,13 +139,23 @@ public:
     // observer never replaces the handler and cannot alter dispatch results.
     void add_observer(MessageObserver observer);
 
+    // Non-blocking send: enqueues the frame to the session's strand-bound write
+    // queue and returns immediately. Returns the number of bytes enqueued (or 0
+    // on failure, with ec set).
     std::size_t send(std::shared_ptr<PeerSession> session,
                      PeerMessageType type,
                      const Bytes& payload,
                      boost::system::error_code& ec) noexcept;
 
-    std::size_t dispatch(std::shared_ptr<PeerSession> session,
-                         boost::system::error_code& ec) noexcept;
+    // Deliver a frame already read by the session's async read loop to the
+    // registered handler (and observers). Runs the handler for `type`, then
+    // notifies observers on success. Unlike the old blocking dispatch(), this
+    // performs no socket I/O; the caller (the session's read loop) runs on the
+    // session's strand, so there is never concurrent access to the SSL stream.
+    void handle_frame(std::shared_ptr<PeerSession> session,
+                      PeerMessageType type,
+                      const Bytes& payload,
+                      boost::system::error_code& ec) noexcept;
 
     std::size_t ping(std::shared_ptr<PeerSession> session,
                      boost::system::error_code& ec) noexcept;
