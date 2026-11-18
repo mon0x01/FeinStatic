@@ -111,17 +111,17 @@ Gate evaluation: FST-BUG-0013/0014/0015 fixes verified at 0773794 = PASS (debug 
 - `f360985e98dd882556cc9e6b531ed2b4099ac727` — accepted and integrated (fst-implementation FST-REQ-0036 FinalityChecker; Verification Gate PASSED debug 343/343; merged via history-preserving merge)
 - `5e1c14583d46096ad309a3a2149a42bc3dfc4be2` — accepted and integrated (fst-debugging VDEF-001/VDEF-002 fixes; Verification Gate PASSED debug+tsan; merged via history-preserving merge)
 
-## Five-agent migration SHAs (commit a40f714)
+## Five-agent migration SHAs (commit ff64364)
 
-Recorded at the permanent five-agent migration. `main` is untouched by this migration; no `team/*` branch is pushed to `origin/main`.
+Recorded at the permanent five-agent migration and the technology/dependency acceptance policy extension. `main` is untouched by this work; no `team/*` branch is pushed to `origin/main`.
 
 | Branch | Commit SHA | Worktree | Agent | Content |
 |---|---|---|---|---|
-| `team/integration` | `a40f71451ad8502c18808742664df57733455ed4` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | `fst-integration` | Five-agent migration baseline commit (charter, roadmap, research ledger, research-proposals, fst-research agent def, five-agent controller, integration ledger updates). |
-| `team/research` | `f18d8e0dc087f051238569d41c176e9f78980c81` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | `fst-research` | Research pilot: CometBFT consensus candidate report + research-status ledger update (read-only) |
-| `team/implementation` | `6566b3b65227a5b22363d2db5d8b0fcccef6ce92` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | `fst-implementation` | implementation-status.md charter + five-agent role obligations (+ fst-research agent def) |
-| `team/verification` | `e9f4768970790b98f7d2920453778e8b8409cfeb` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | `fst-verification` | verification-status.md charter + five-agent role obligations (+ fst-research agent def) |
-| `team/debugging` | `afa92e5d193355f0bfbd060fe5b3211ebfe81c2d` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | `fst-debugging` | defect-register.md charter + five-agent role obligations (+ fst-research agent def) |
+| `team/integration` | `ff64364793eb7cd9feedbc52ae4d609cbcaca84a` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | `fst-integration` | Migration + technology/dependency acceptance policy: engineering charter §19, decision closure roadmap M-19/M-20, research-status research tasks RT-LICENSE-001/RT-DEP-002, policies/technology-and-dependency-acceptance.md, all five agent definitions (five-agent model, dependency gates), integration ledger updates |
+| `team/research` | `9f72f8e3979f5359ad178f243f8b42f690b83b8b` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | `fst-research` | Research pilot: CometBFT consensus candidate report + research-status research tasks RT-LICENSE-001/RT-DEP-002 + five-agent agent definitions |
+| `team/implementation` | `29703331e13a0430605e46537d510e1b2252954e` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | `fst-implementation` | implementation-status.md charter + five-agent role obligations + dependency gate + five-agent agent definitions |
+| `team/verification` | `f7ac5ff53a189c21fd56d491fb391995aa88e3ad` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | `fst-verification` | verification-status.md charter + five-agent role obligations + dependency/license evidence standard + five-agent agent definitions |
+| `team/debugging` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | `fst-debugging` | defect-register.md charter + five-agent role obligations + no-incidental-dependency rule + five-agent agent definitions |
 | `main` | `b69857a36daa04578be61ca3f7d2d7bf39bfa99c` | `/home/monil/Desktop/CXX/FeinStatic` | (none) | Untouched by this migration |
 
 ## Outstanding blockers
