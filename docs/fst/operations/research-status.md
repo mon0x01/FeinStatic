@@ -45,6 +45,8 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 | RQ-07 | Independent client implementation count (D-035, M-08) | Research | OPEN | D-035 OPEN RESEARCH | Phase 5+ |
 | RQ-08 | Cryptographic primitives and key lifecycle (M-10) | Research | DEFERRED-BY-DESIGN | Cryptographic review | Phase 4 |
 | RQ-09 | State synchronization and light-client proofs (M-14) | Research | DEFERRED-BY-DESIGN | Node-roles research | Phase 5 |
+| RT-LICENSE-001 | Root-project license comparison (Apache-2.0, GPL-3.0, MPL-2.0, others) — BLOCKED-ON-OWNER (M-19) | Research | PENDING-OWNER | Policy documented (`docs/fst/policies/technology-and-dependency-acceptance.md` §7); no agent may silently select root license | Phase 2–4 |
+| RT-DEP-002 | Dependency policy automation research (license scanning, SPDX SBOM, allowlist/denylist, provenance, vulnerability scanning) — DEFERRED-BY-DESIGN (M-20) | Research | PENDING | Policy documented; CI controls researched after owner sign-off | Phase 4+ |
 
 ---
 
@@ -126,7 +128,9 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 
 | Blocked item | Blocked by | Required action | Unblock condition |
 |---|---|---|---|
-| RQ-02 executable prototype + ≥4-validator acceptance evidence | Go 1.25.0 toolchain not installed (`go: command not found`) | Install Go 1.25.0; run feasibility spike prototype steps (genesis init, single-process ABCI exercise, persistence/restart, ≥4 validators, Byzantine fault injection, determinism, crash recovery, activation-height tests) | Go 1.25.0 available in environment; fst-verification gate passed |
+| RQ-02 executable prototype + ≥4-validator acceptance evidence | Go 1.25.0 toolchain not installed (`go: command not found`) | Install Go 1.25.0; run feasibility spike prototype steps | Go 1.25.0 available in environment; fst-verification gate passed |
+| RT-LICENSE-001 root-project license comparison | Owner decision (M-19 BLOCKED-ON-OWNER) | Owner explicitly selects root-project license; LICENSE file added only with owner authorization | Owner license decision recorded |
+| RT-DEP-002 dependency policy automation | Policy documented; owner sign-off for CI implementation (M-20 DEFERRED-BY-DESIGN) | Research CI controls; implement only after policy accepted | CI gates enforce policy; exceptions not hidden through scanner configuration |
 | CSA-2026-001 inclusion in v0.40.0 tree | Not re-verified by direct source inspection (inference basis only) | Direct inspection of v0.40.0 source tree once Go toolchain available | Fix confirmed in v0.40.0 tree |
 
 ---
