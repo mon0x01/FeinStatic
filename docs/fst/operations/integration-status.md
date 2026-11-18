@@ -30,6 +30,8 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 | DT-03 | Defect FST-BUG-0013 SecureSession handshake_result_ cross-thread race — DEFERRED to Phase 4; no source modifications yet; inventory existing evidence only | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | DEFERRED |
 | VDEF-fix | VDEF-2026-11-18-001 ASan SEGV abci_codec.cpp:674 + VDEF-2026-11-18-002 TSan races abci_socket_server.cpp:270/:273 — DISPATCHED to fst-debugging (task_1795032671) | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | COMPLETE |
 | RS-01 | Five-agent migration and research agent setup — fst-research agent definition, research-status ledger, engineering charter, decision closure roadmap, team/research worktree, five-agent controller extension, AGENTS.md sync, read-only research pilot | `fst-research` | `team/research` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | IN_PROGRESS |
+| VT-02 | Verify current team/integration HEAD b85bc4a across all five build presets (debug, release, asan, clang-release, tsan); establish fresh verification baseline | `fst-verification` | `team/verification` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | DISPATCHED (task_1795041607_fst-verification) |
+| IT-02 | FST-REQ-0037 validator entry & exit: inactivity leak, epoch-based committee rotation, epoch transitions, slashing evidence flow (src/staking/, include/feinstat/staking/); tests/ owned by fst-debugging — coordinate via fst-integration | `fst-implementation` | `team/implementation` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | DISPATCHED (task_1795041609_fst-implementation) |
 
 ## Source-file ownership reservations
 
