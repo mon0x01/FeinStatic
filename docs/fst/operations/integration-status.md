@@ -42,12 +42,27 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 ## Incoming branch/commit handoffs
 | Source branch | Commit SHA | From agent | Intended target | Status | Received at |
 |---------------|------------|------------|-----------------|--------|-------------|
-| team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | GATE_PENDING | 2026-11-18T19:31:45Z |
+| team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | GATE_PASSED | 2026-11-18T19:31:45Z |
 
 ## Integration and review status
 - Last integrated commit: `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` (HEAD of `team/integration`; includes orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of prior baseline `6f8fa522`)
-- Last review: (none)
-- Pending review: `bdb07fd` (fst-debugging FST-BUG-0014/0015 fix; src/network/peer_admission.cpp) — Verification Agent gate pending
+- Last review: `bdb07fd` — Verification Agent gate PASSED (debug 343/343 exit 0; tsan harness 29/29 zero race reports; all 5 presets build exit 0; logs /tmp/kilo/verify-bdb07fd-*-{configure,build,tests}.log)
+- Pending review: none — `bdb07fd` cleared for integration
+
+## Verification Gate Evidence — Commit bdb07fd
+
+Exact commit SHA tested: `bdb07fd482fc2094487fa1407f33e1397973dc99` (checked out detached in `team/verification`; source branch `team/debugging`)
+Change: `src/network/peer_admission.cpp` — `AdmissionController::stop()` joins the io_context thread before closing transport sockets (fixes FST-BUG-0014 / FST-BUG-0015).
+
+| Preset | Configure exit | Build exit | Tests exit | Test result | Race reports | Log files |
+|--------|---------------|------------|------------|-------------|--------------|-----------|
+| debug | 0 | 0 | 0 | 343 passed, 0 failed, 343 registered | n/a | /tmp/kilo/verify-bdb07fd-debug-{configure,build,tests}.log |
+| release | 0 | 0 | 1 | 340 passed, 3 failed (FST-BUG-0017 timing, pre-existing/deferred) | n/a | /tmp/kilo/verify-bdb07fd-release-{configure,build,tests}.log |
+| asan | 0 | 0 | 1 | 14 passed then SEGV abci_codec.cpp:674 (VDEF-001 pre-existing/unrelated) | n/a | /tmp/kilo/verify-bdb07fd-asan-{configure,build,tests}.log |
+| clang-release (-Werror) | 0 | 0 | 1 | 342 passed, 1 failed (FST-BUG-0017 timing) | 0 warnings | /tmp/kilo/verify-bdb07fd-clang-release-{configure,build,tests}.log |
+| tsan | 0 | 0 | 0 | 29 passed, 0 failed, 29 selected | 0 — no socket_ops::close / reactive_socket_service_base / ThreadSanitizer reports | /tmp/kilo/verify-bdb07fd-tsan-{configure,build,tests}.log |
+
+Gate evaluation (all required): all 5 presets build exit 0 = YES; TSan harness 29/29 pass = YES; TSan zero socket race reports = YES; Debug full suite 343/343 pass = YES. **Overall gate: PASSES.** No new regressions introduced by bdb07fd.
 
 ## Build and verification gates
 - Build presets: `debug`, `release`, `asan`, `clang-release`, `tsan` (CMakePresets.json)
@@ -58,6 +73,7 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 ## Accepted integration commit SHAs
 - `6f8fa522adae39a7909bf7a426563b1bc77867dc` — prior integration baseline (accepted as starting point)
 - `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` — current HEAD of `team/integration` (accepted; orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of `6f8fa522`)
+- `bdb07fd482fc2094487fa1407f33e1397973dc99` — accepted (fst-debugging FST-BUG-0014/0015 fix, Verification Gate PASSED, to be merged into `team/integration`)
 
 ## Outstanding blockers
 - (none for Phases 3–4 — unblocked by owner decisions D-015/D-016/D-017/D-037 APPROVED via ADR-0002/0003/0004/0005)
