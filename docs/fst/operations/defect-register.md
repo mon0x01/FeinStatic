@@ -455,3 +455,16 @@ hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
 - `docs/fst/operations/verification-status.md` — Verification status for same requirement IDs.
 - `docs/fst/architecture/network-runtime-capability-matrix.md` — Baseline diagnostic probes that discovered defects.
 - `AGENTS.md` — Defect handling workflow (step 7: run tests, report actual results; never fabricate).
+
+---
+
+## Ledger ownership and four-agent workflow references
+
+This ledger is owned exclusively by the Debugging Agent (`fst-debugging`). The Implementation Agent, Integration Agent, and Verification Agent may read it but must not edit it.
+
+- **Owning agent:** `fst-debugging`
+- **Read-only for:** `fst-implementation`, `fst-integration`, `fst-verification`
+- **Edit-allowed paths (this agent):** `src/**`, `include/**`, `tests/**`, `docs/fst/operations/defect-register.md`
+- **Methodology:** Investigate evidence first; reproduce defects; preserve logs; identify root causes; implement targeted fixes; add regression tests. Coordinate source-file ownership with the Implementation Agent through the Integration Agent's reservations in `integration-status.md`; must not simultaneously edit a file reserved for another active task.
+- **Record standard:** Each defect entry must include evidence, root cause, fix, commit SHA, and regression test coverage. Report actual evidence; never fabricate.
+- **Source of role definition:** `.kilo/agents/fst-debugging.md` (`mode: primary`, `bash: ask`).

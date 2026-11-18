@@ -231,3 +231,16 @@ Per AGENTS.md and project plan cross-cutting requirements:
 - `docs/fst/operations/defect-register.md` — Defects discovered during verification.
 - `docs/fst/architecture/network-runtime-capability-matrix.md` — Baseline diagnostic probes.
 - `AGENTS.md` — Verification evidence requirements (workflow step 7).
+
+---
+
+## Ledger ownership and four-agent workflow references
+
+This ledger is owned exclusively by the Verification Agent (`fst-verification`). The Implementation Agent, Integration Agent, and Debugging Agent may read it but must not edit it.
+
+- **Owning agent:** `fst-verification`
+- **Read-only for:** `fst-implementation`, `fst-integration`, `fst-debugging`
+- **Edit-allowed paths (this agent):** `docs/fst/operations/verification-status.md` only
+- **Capabilities:** Inspect source, read all records, configure and run builds, test components, execute integration/regression suites, inspect logs, report defects. Does NOT edit production source, tests, build configuration, or another ledger.
+- **Evidence standard:** Every result must identify the precise commit SHA tested, build preset, command, exit code, and log location. Hand verification results (pass/fail with exact SHA and evidence) to the Integration Agent (`fst-integration`) for the integration gate.
+- **Source of role definition:** `.kilo/agents/fst-verification.md` (`mode: primary`, `bash: ask`).

@@ -197,3 +197,15 @@ and updated at every durable checkpoint.
 - Cross-cutting requirements (0066–0074) are IN_PROGRESS as ongoing enforcement activities.
 - Working tree is clean. All source files and tests are present on main at `52341a0`.
 - This ledger must be updated at every durable checkpoint (see AGENTS.md Part E).
+
+---
+
+## Ledger ownership and four-agent workflow references
+
+This ledger is owned exclusively by the Implementation Agent (`fst-implementation`). The Verification Agent, Integration Agent, and Debugging Agent may read it but must not edit it.
+
+- **Owning agent:** `fst-implementation`
+- **Read-only for:** `fst-integration`, `fst-verification`, `fst-debugging`
+- **Edit-allowed paths (this agent):** `src/**`, `include/**`, `proto/**`, `docs/fst/operations/implementation-status.md`
+- **Coordination:** Handoff integration-ready work to the Integration Agent (`fst-integration`) via exact commit SHA; record in `docs/fst/operations/integration-status.md`. Coordinate source-file ownership reservations through `integration-status.md`. Do not edit `integration-status.md`, `verification-status.md`, or `defect-register.md`. Do not push directly to `main`; no destructive Git operations; no broad staging (`git add .` / `git add -A`).
+- **Source of role definition:** `.kilo/agents/fst-implementation.md` (`mode: primary`, `bash: ask`).

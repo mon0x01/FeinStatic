@@ -536,6 +536,25 @@ The autonomous continuation protocol (AGENTS.md) enforces:
 
 ---
 
+## Permanent Four-Agent Engineering Operating Model
+
+FST development follows a permanent four-agent engineering operating model (defined in AGENTS.md Section "Permanent Four-Agent Engineering Operating Model" and encoded in `.kilo/agents/fst-*.md`). A general-purpose single-agent workflow is not an alternative default; the user may authorize a temporary exception only, and no agent may independently revert to single-agent operation.
+
+| Agent | Role ID | Primary responsibility | Owns exclusively | Edit-allowed paths |
+|-------|---------|------------------------|------------------|--------------------|
+| Implementation Agent | `fst-implementation` | New approved FST features and components | `implementation-status.md` | `src/**`, `include/**`, `proto/**`, `implementation-status.md` |
+| Integration Agent | `fst-integration` | Team coordination, integration branch, reviewed-work integration | `integration-status.md` | `CMakeLists.txt`, `cmake/**`, `scripts/**`, `.github/**`, `README.md`, `integration-status.md` |
+| Verification Agent | `fst-verification` | Independent project QA and verification | `verification-status.md` | `verification-status.md` only |
+| Debugging Agent | `fst-debugging` | Defect investigation, root-cause analysis, reliability fixes | `defect-register.md` | `src/**`, `include/**`, `tests/**`, `defect-register.md` |
+
+All four agents are defined in `.kilo/agents/fst-*.md` (`mode: primary`, `bash: ask`, leading `edit: "*": deny` then role-specific allows). No agent may edit another role's ledger. The Integration Agent coordinates handoffs via `integration-status.md` (source-file ownership reservations, incoming commit handoffs by exact SHA, build/verification gates, accepted integration SHAs, outstanding blockers). Integration occurs on `team/integration` only after the Verification Agent's gate passes; nothing is pushed directly to `main`; destructive Git operations and broad staging are prohibited.
+
+All four worktrees (`team/integration`, `team/implementation`, `team/verification`, `team/debugging`) live under `/home/monil/Desktop/CXX/FeinStatic-agents/` and branch from the common integration setup commit, sharing identical agent definitions and ledgers.
+
+The retired single-agent procedure ("the agent" implements, integrates, tests, and debugs everything independently; "update all four operation records" by one agent) is superseded. Each agent updates only its owned ledger; cross-ledger coordination goes through the Integration Agent.
+
+---
+
 **End of Project Plan.** This document must be updated only when:
 - Owner approves a new ADR changing phase dependencies or requirement definitions.
 - A requirement is split (preserve original ID as parent).
