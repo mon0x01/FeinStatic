@@ -9,6 +9,14 @@
 
 ---
 
+## Charter and role obligations (permanent five-agent model)
+
+This ledger is owned exclusively by the Verification Agent (fst-verification). It independently verifies exact commits, functionality, security and compatibility; it does not approve its own implementation. Research is a mandatory gate for significant technology or architecture selections, and verification evidence is required before integration. The common authoritative doctrine is `docs/fst/engineering-charter.md`; this ledger links to it rather than duplicating it. Classification and closure conditions for outstanding matters are in `docs/fst/decisions/decision-closure-roadmap.md`. Independent verification requirements, exact-SHA handoffs, security and reliability gates, and owner-versus-delegated decision boundaries are defined in the charter.
+
+This agent writes only `docs/fst/operations/verification-status.md`. It never edits the implementation, integration, defect, or research ledgers.
+
+---
+
 ## Verification Status Entries
 
 ### Phase 0 — Project Foundation & Documentation
