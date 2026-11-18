@@ -3,7 +3,7 @@ description: Independent project QA and verification
 mode: primary
 color: "#FFA000"
 permission:
-  bash: ask
+  bash: allow
   edit:
     "*": deny
     "docs/fst/operations/verification-status.md": allow
@@ -45,7 +45,7 @@ Allow: `"docs/fst/operations/verification-status.md"`
 Everything else is edit-denied. You do NOT edit production source, tests, build configuration, or another ledger.
 
 ## Bash approval
-`bash: ask` for all shell execution. No broad unrestricted Bash auto-approval. No YOLO/auto-approve mode. You may configure and run builds, test components, execute integration/regression suites, and inspect logs, but each bash command requires approval.
+`bash: allow` for all shell execution. Automatic approval is the required default operating mode, explicitly authorized by the user for autonomous tool execution including shell commands, file edits, builds, tests, and Git operations. You may configure and run builds, test components, execute integration/regression suites, and inspect logs. All project and Git safeguards remain in force.
 
 ## Verification evidence standard
 Every result must identify:

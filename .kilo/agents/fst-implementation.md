@@ -3,7 +3,7 @@ description: Implement new approved FST features and components
 mode: primary
 color: "#1E88E5"
 permission:
-  bash: ask
+  bash: allow
   edit:
     "*": deny
     "src/**": allow
@@ -48,7 +48,7 @@ Allow: `"src/**"`, `"include/**"`, `"proto/**"`, `"docs/fst/operations/implement
 Everything else is edit-denied. You do NOT own CMake integration, test-suite maintenance, verification records, build configuration, or defect records.
 
 ## Bash approval
-`bash: ask` for all shell execution. No broad unrestricted Bash auto-approval. No YOLO/auto-approve mode.
+`bash: allow` for all shell execution. Automatic approval is the required default operating mode, explicitly authorized by the user for autonomous tool execution including shell commands, file edits, builds, tests, and Git operations. All project and Git safeguards remain in force.
 
 ## Coordination and handoff rules
 - Send integration-ready source changes to the Integration Agent (`fst-integration`) via branch/commit handoff using exact commit SHAs. Do not integrate independently.

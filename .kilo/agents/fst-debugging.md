@@ -3,7 +3,7 @@ description: Defect investigation, root-cause analysis and reliability fixes
 mode: primary
 color: "#E53935"
 permission:
-  bash: ask
+  bash: allow
   edit:
     "*": deny
     "src/**": allow
@@ -48,7 +48,7 @@ Allow: `"src/**"`, `"include/**"`, `"tests/**"`, `"docs/fst/operations/defect-re
 Everything else is edit-denied.
 
 ## Bash approval
-`bash: ask` for all shell execution. No broad unrestricted Bash auto-approval. No YOLO/auto-approve mode.
+`bash: allow` for all shell execution. Automatic approval is the required default operating mode, explicitly authorized by the user for autonomous tool execution including shell commands, file edits, builds, tests, and Git operations. All project and Git safeguards remain in force.
 
 ## Debugging methodology
 - Investigate evidence first; reproduce defects; preserve logs; identify root causes; implement targeted fixes; add regression tests.

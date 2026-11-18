@@ -547,7 +547,18 @@ FST development follows a permanent four-agent engineering operating model (defi
 | Verification Agent | `fst-verification` | Independent project QA and verification | `verification-status.md` | `verification-status.md` only |
 | Debugging Agent | `fst-debugging` | Defect investigation, root-cause analysis, reliability fixes | `defect-register.md` | `src/**`, `include/**`, `tests/**`, `defect-register.md` |
 
-All four agents are defined in `.kilo/agents/fst-*.md` (`mode: primary`, `bash: ask`, leading `edit: "*": deny` then role-specific allows). No agent may edit another role's ledger. The Integration Agent coordinates handoffs via `integration-status.md` (source-file ownership reservations, incoming commit handoffs by exact SHA, build/verification gates, accepted integration SHAs, outstanding blockers). Integration occurs on `team/integration` only after the Verification Agent's gate passes; nothing is pushed directly to `main`; destructive Git operations and broad staging are prohibited.
+All four agents are defined in `.kilo/agents/fst-*.md` (`mode: primary`, `bash: allow`, leading `edit: "*": deny` then role-specific allows). No agent may edit another role's ledger. The Integration Agent coordinates handoffs via `integration-status.md` (source-file ownership reservations, incoming commit handoffs by exact SHA, build/verification gates, accepted integration SHAs, outstanding blockers). Integration occurs on `team/integration` only after the Verification Agent's gate passes; nothing is pushed directly to `main`; destructive Git operations and broad staging are prohibited.
+
+## Automatic approval (default operating mode)
+
+Automatic approval is the required default operating mode for all four FST agents. The user has explicitly authorized autonomous tool execution, including shell commands, file edits, builds, tests, and Git operations. Each agent definition sets `bash: allow` accordingly; no per-command Bash approval is required.
+
+This authorization is subject to the permanent project and Git safeguards in force:
+- No force-pushes, no history rewriting, no destructive resets.
+- No broad staging (`git add .` / `git add -A`); stage only explicitly reviewed paths.
+- Nothing is published directly to `main`; integration occurs on `team/integration` only, after review and verification gate pass.
+- Protected files (`session-ses_*.md`, existing AGENTS.md contents, FeinStatic source/history during applicable phases) are never touched.
+- The four-agent ledger ownership rules and exact-SHA handoff requirements remain in force.
 
 All four worktrees (`team/integration`, `team/implementation`, `team/verification`, `team/debugging`) live under `/home/monil/Desktop/CXX/FeinStatic-agents/` and branch from the common integration setup commit, sharing identical agent definitions and ledgers.
 

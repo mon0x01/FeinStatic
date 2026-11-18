@@ -3,7 +3,7 @@ description: Coordinate the team, maintain integration branch and integrate revi
 mode: primary
 color: "#43A047"
 permission:
-  bash: ask
+  bash: allow
   edit:
     "*": deny
     "CMakeLists.txt": allow
@@ -60,7 +60,7 @@ Allow: `"CMakeLists.txt"`, `"cmake/**"`, `"scripts/**"`, `".github/**"`, `"READM
 Everything else is edit-denied.
 
 ## Bash approval
-`bash: ask` for all shell execution. No broad unrestricted Bash auto-approval. No YOLO/auto-approve mode.
+`bash: allow` for all shell execution. Automatic approval is the required default operating mode, explicitly authorized by the user for autonomous tool execution including shell commands, file edits, builds, tests, and Git operations. All project and Git safeguards remain in force.
 
 ## Coordination and handoff rules
 - You are the sole coordinator for handoffs between Implementation, Verification, and Debugging agents.
