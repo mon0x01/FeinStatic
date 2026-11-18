@@ -117,7 +117,7 @@ Recorded at the permanent five-agent migration. `main` is untouched by this migr
 
 | Branch | Commit SHA | Worktree | Agent | Content |
 |---|---|---|---|---|
-| `team/integration` | `a40f71451ad8502c18808742664df57733455ed4` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | `fst-integration` | Migration: engineering charter, decision closure roadmap, research-status ledger, research-proposals dir, fst-research agent def, five-agent controller, integration ledger updates |
+| `team/integration` | `478cda90e9f1c54ceacdf41431c162a4e556b77f` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | `fst-integration` | Migration: engineering charter, decision closure roadmap, research-status ledger, research-proposals dir, fst-research agent def, five-agent controller, integration ledger updates (this commit records the table; HEAD advances on the commit itself) |
 | `team/research` | `f18d8e0dc087f051238569d41c176e9f78980c81` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | `fst-research` | Research pilot: CometBFT consensus candidate report + research-status ledger update (read-only) |
 | `team/implementation` | `f5213c1881ecba12f6737e820a6aa0646c251fc2` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | `fst-implementation` | implementation-status.md charter + five-agent role obligations |
 | `team/verification` | `716406b4c62856d27aaf84141f41cef74dd5d91a` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | `fst-verification` | verification-status.md charter + five-agent role obligations |
