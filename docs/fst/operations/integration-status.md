@@ -173,3 +173,52 @@ When the user types `continue` in the Integration Kilo session:
 - Do not treat a running process as successful before collecting its actual exit status.
 - Do not represent old-SHA verification as evidence for a newer commit.
 - Duplicate dispatch to a busy agent is prevented (exit code 2).
+
+## Permanent Orchestration Behavior (every `continue`)
+
+The Integration Agent acts as the active team coordinator on every `continue`.
+This behavior is permanent and occurs automatically, not only on request.
+
+### Mandatory orchestration cycle
+
+1. **Read**: AGENTS.md, project-plan.md, and all four latest ledgers (integration
+   ledger from `team/integration` ref; other ledgers from their respective branch
+   refs via `git show team/<role>:<ledger>`).
+2. **Inspect**: `fst-team status` — check agent availability, worktree branches,
+   active tasks, source-file ownership reservations in `integration-status.md`.
+3. **Inspect**: all four branch heads, worktrees, active reservations, and
+   outstanding handoffs.
+4. **Identify**: the next eligible, non-conflicting assignment for EACH of the
+   three specialist agents (fst-implementation, fst-verification, fst-debugging),
+   respecting task priority, dependencies, and source-file ownership reservations.
+5. **Dispatch**: all three agents concurrently using `fst-team dispatch <agent>
+   <task>`. Do NOT wait for fst-implementation to finish before dispatching
+   fst-verification or fst-debugging. Independent tasks run concurrently.
+6. **Session reuse**: use each agent's existing persistent Kilo session. Never
+   create duplicate sessions or duplicate tasks. A running agent must not receive
+   a duplicate task (duplicate dispatch prevented, exit code 2).
+7. **Coordinate**: allow the three agents to work independently while the
+   Integration Agent tracks their task IDs, session IDs, and process states via
+   `fst-team status`.
+8. **Collect**: `fst-team collect <task_id>` — wait for completion, verify actual
+   process exit codes, exact commit SHAs, and evidence. Do not falsely report
+   unfinished tasks as successful.
+9. **Process handoffs**: arrange targeted verification; accept only work that
+   meets the integration gate (Verification Agent's gate: exact SHA, build preset,
+   command, exit code, log location).
+10. **Update**: `integration-status.md` — record accepted commit SHAs, update
+    reservations, update handoff statuses, coordinate next cycle.
+
+### Persistent behavior
+
+- A `continue` initiates or resumes an actual parallel work cycle whenever
+  eligible work exists.
+- If all three agents are genuinely blocked or have no eligible tasks, explain
+  why and report their individual states.
+- Do not push to `main`, change the approved FST scope, violate ledger ownership,
+  or override the Phase 4 debugging priority (FST-BUG-0013/0014/0015/0017
+  deferred to Phase 4 unless the user explicitly changes priority).
+- The desired operating model is three simultaneously working specialist agents,
+  continuously coordinated by Integration, with the owner providing only
+  `continue` and `stop` commands.
+
