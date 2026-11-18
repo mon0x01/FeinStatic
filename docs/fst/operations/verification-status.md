@@ -4,7 +4,7 @@
 
 **Version:** 1.0
 **Date:** 2026-11-17
-**Git HEAD:** `87919e8cfea3881c6f00280c2e7c54588c7f2cb0` (main, up to date with origin/main)
+**Git HEAD:** `52341a04d2ac095b64df1bcc8d11790dfc179950` (main, up to date with origin/main)
 **Classification:** Live document — updated at every durable checkpoint where tests run.
 
 ---

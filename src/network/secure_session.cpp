@@ -39,6 +39,13 @@ SecureSessionContext::SecureSessionContext(
     ssl_ctx_.set_options(boost::asio::ssl::context::no_tlsv1 |
                          boost::asio::ssl::context::no_tlsv1_1 |
                          boost::asio::ssl::context::no_tlsv1_2);
+    // SSL_MODE_AUTO_RETRY makes SSL_write()/SSL_read() automatically handle
+    // internal BIO reads/writes (e.g., for TLS record processing) without
+    // returning SSL_ERROR_WANT_READ/SSL_ERROR_WANT_WRITE. This prevents
+    // potential deadlocks where one SSL operation blocks waiting for the
+    // underlying socket while another operation on the same stream is blocked
+    // from a different thread.
+    SSL_CTX_set_mode(ssl_ctx_.native_handle(), SSL_MODE_AUTO_RETRY);
     ssl_ctx_.set_verify_mode(boost::asio::ssl::verify_peer |
                              boost::asio::ssl::context::verify_fail_if_no_peer_cert);
 }

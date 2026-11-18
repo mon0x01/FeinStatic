@@ -25,34 +25,30 @@ jobs:
       - name: Install Go toolchain
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27.x'
+          go-version: '1.25.x'
           check-latest: true
 
-      - name: Install CometBFT v0.40.0
+      - name: Install CometBFT v0.40.0 from source
         run: |
           set -Eeuo pipefail
           COMETBFT_VERSION="v0.40.0"
-          COMETBFT_ARCH="linux-amd64"
-          COMETBFT_TARBALL="cometbft_${COMETBFT_VERSION}_${COMETBFT_ARCH}.tar.gz"
-          COMETBFT_URL="https://github.com/cometbft/cometbft/releases/download/${COMETBFT_VERSION}/${COMETBFT_TARBALL}"
 
-          # Download CometBFT release
-          curl -fsSL -o /tmp/cometbft.tar.gz "${COMETBFT_URL}"
+          # Build CometBFT from the tagged release using Go module verification.
+          # Go automatically verifies module checksums against the checksum database.
+          go install "github.com/cometbft/cometbft/cmd/cometbft@${COMETBFT_VERSION}"
 
-          # Verify SHA256 checksum against the release's checksums file
-          curl -fsSL -o /tmp/cometbft.sha256 "${COMETBFT_URL}.sha256"
-          cd /tmp
-          sha256sum -c cometbft.sha256
-
-          # Extract and install CometBFT binary
-          tar -xzf cometbft.tar.gz
-          install -m 0755 cometbft /usr/local/bin/cometbft
-          cometbft version
+          # Verify the installed version explicitly.
+          INSTALLED_VERSION="$(cometbft version 2>&1 | head -1)"
+          echo "Installed CometBFT: ${INSTALLED_VERSION}"
+          echo "${INSTALLED_VERSION}" | grep -q "${COMETBFT_VERSION}" || {
+            echo "ERROR: CometBFT version mismatch. Expected ${COMETBFT_VERSION}, got: ${INSTALLED_VERSION}" >&2
+            exit 1
+          }
 
       - name: Run complete verification matrix
         run: |
           set -Eeuo pipefail
-          export COMETBFT_PATH=/usr/local/bin/cometbft
+          export COMETBFT_PATH="$(go env GOPATH)/bin/cometbft"
           ./scripts/verify-all.sh
 
       - name: Validate project records

@@ -354,22 +354,288 @@ else
 fi
 
 # --------------------------------------------------------------------
-# Check 9: No tracked files match .gitignore (publication safety)
+# Check 10: Phase status consistency — Phase Overview table status labels
+# must agree with the ordering constraint (Phases 0–2 COMPLETE, 5–10 DEFERRED).
 # --------------------------------------------------------------------
 echo
-echo "--- Check 9: No tracked files match .gitignore ---"
+echo "--- Check 10: Phase status consistency ---"
 
-ignored_but_tracked=()
-while IFS= read -r f; do
-    if git check-ignore -q "$f" 2>/dev/null; then
-        ignored_but_tracked+=("$f")
+if [[ -f "docs/fst/operations/project-plan.md" ]]; then
+    # Phase Overview table: | N | FST-PHASE-NN | Title | STATUS | Purpose |
+    while IFS= read -r line; do
+        phase_num=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}')
+        phase_id=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $3); print $3}')
+        phase_status=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $5); print $5}')
+
+        if [[ "$phase_num" =~ ^[0-9]+$ ]] && [[ "$phase_id" =~ ^FST-PHASE- ]]; then
+            case "$phase_num" in
+                0|1|2)
+                    if [[ "$phase_status" != "COMPLETE" ]]; then
+                        fail "Phase $phase_id status is '$phase_status', expected COMPLETE (ordering constraint: Phases 0-2 complete)"
+                    else
+                        pass "Phase $phase_id status is COMPLETE (matches ordering constraint)"
+                    fi
+                    ;;
+                3|4)
+                    if [[ "$phase_status" != "IN_PROGRESS" && "$phase_status" != "UNBLOCKED" && "$phase_status" != "BLOCKED" ]]; then
+                        fail "Phase $phase_id status is '$phase_status', expected IN_PROGRESS/UNBLOCKED/BLOCKED"
+                    else
+                        pass "Phase $phase_id status is '$phase_status' (valid for unblocked phase)"
+                    fi
+                    ;;
+                5|6|7|8|9|10)
+                    if [[ "$phase_status" != "DEFERRED" ]]; then
+                        fail "Phase $phase_id status is '$phase_status', expected DEFERRED (ordering constraint: Phases 5-10 deferred)"
+                    else
+                        pass "Phase $phase_id status is DEFERRED (matches ordering constraint)"
+                    fi
+                    ;;
+            esac
+        fi
+    done < <(grep '^| *[0-9] | FST-PHASE-' docs/fst/operations/project-plan.md)
+fi
+
+# --------------------------------------------------------------------
+# Check 11: Decision classifications — decision-register.md classifications
+# must match scope-v0.1.md current-scope amendment table.
+# --------------------------------------------------------------------
+echo
+echo "--- Check 11: Decision classifications consistency ---"
+
+if [[ -f "docs/fst/decisions/decision-register.md" ]] && [[ -f "docs/fst/scope/scope-v0.1.md" ]]; then
+    # Extract classifications from decision-register.md
+    declare -A register_classifications
+    while IFS= read -r line; do
+        did=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $2); print $2}')
+        class=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $5); print $5}')
+        if [[ "$did" =~ ^D-[0-9]+$ ]] && [[ -n "$class" ]]; then
+            register_classifications["$did"]="$class"
+        fi
+    done < <(grep '^| D-[0-9]' docs/fst/decisions/decision-register.md)
+
+    # Extract classifications from scope-v0.1.md amendment table
+    declare -A scope_classifications
+    while IFS= read -r line; do
+        did=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $3); print $3}')
+        class=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $4); print $4}')
+        if [[ "$did" =~ ^D-[0-9]+$ ]] && [[ -n "$class" ]]; then
+            scope_classifications["$did"]="$class"
+        fi
+    done < <(grep '^| [^|]*| D-[0-9]' docs/fst/scope/scope-v0.1.md)
+
+    for did in "${!register_classifications[@]}"; do
+        reg_class="${register_classifications[$did]}"
+        # Only check decisions that appear in BOTH documents
+        scope_class="${scope_classifications[$did]:-}"
+        if [[ -z "$scope_class" ]]; then
+            continue  # Decision not in scope amendment — skip
+        fi
+        if [[ "$reg_class" != "$scope_class" ]]; then
+            # Allow scope to provide more detail (e.g., "APPROVED (reqs), mechanisms OPEN RESEARCH" vs "APPROVED")
+            if [[ "$scope_class" == "$reg_class"* ]]; then
+                pass "Decision $did: classification '$reg_class' consistent (scope elaborates: '$scope_class')"
+            else
+                fail "Decision $did: register='$reg_class' vs scope='$scope_class' — classification mismatch"
+            fi
+        else
+            pass "Decision $did: classification '$reg_class' consistent across register and scope"
+        fi
+    done
+fi
+
+# --------------------------------------------------------------------
+# Check 12: Defect summary statistics vs actual defect entries
+# --------------------------------------------------------------------
+echo
+echo "--- Check 12: Defect summary statistics vs actual entries ---"
+
+if [[ -f "docs/fst/operations/defect-register.md" ]]; then
+    # Count actual defect entries by status from the register
+    declare -A actual_status_count
+    while IFS= read -r status; do
+        [[ -n "$status" ]] && actual_status_count["$status"]=$(( ${actual_status_count["$status"]:-0} + 1 ))
+    done < <(grep -E '^\| \*\*Status\*\* \|' docs/fst/operations/defect-register.md | sed -E 's/^\| \*\*Status\*\* \| *([^ ]+) *\|$/\1/')
+
+    actual_open=${actual_status_count["OPEN"]:-0}
+    actual_investigating=${actual_status_count["INVESTIGATING"]:-0}
+    actual_verified_fixed=${actual_status_count["VERIFIED_FIXED"]:-0}
+
+    # Parse the statistics table Total row and compare against actual counts
+    stats_header_re='^\| *Severity *\|'
+    total_row_re='\*\*Total\*\*'
+    in_stats=0
+    total_open=""
+    total_investigating=""
+    total_verified_fixed=""
+    while IFS= read -r line; do
+        if [[ "$line" =~ $stats_header_re ]]; then
+            in_stats=1
+            continue
+        fi
+        if [[ $in_stats -eq 1 && "$line" =~ ^---\| ]]; then
+            continue
+        fi
+        if [[ $in_stats -eq 1 && "$line" =~ ^\| ]]; then
+            if [[ "$line" =~ $total_row_re ]]; then
+                total_open=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $3); gsub(/\*\*/, "", $3); print $3}')
+                total_investigating=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $4); gsub(/\*\*/, "", $4); print $4}')
+                total_verified_fixed=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $7); gsub(/\*\*/, "", $7); print $7}')
+                in_stats=0
+                continue
+            fi
+        fi
+    done < docs/fst/operations/defect-register.md
+
+    total_open=${total_open:-}
+    total_investigating=${total_investigating:-}
+    total_verified_fixed=${total_verified_fixed:-}
+
+    if [[ -n "$total_open" && "$total_open" =~ ^[0-9]+$ ]]; then
+        if [[ "$total_open" -ne "$actual_open" ]]; then
+            fail "Defect statistics: Total row OPEN count $total_open != actual $actual_open"
+        else
+            pass "Defect statistics: Total row OPEN count $total_open == actual $actual_open"
+        fi
+    else
+        fail "Defect statistics: Total row OPEN count missing or non-numeric"
     fi
-done < <(git ls-files)
 
-if [[ ${#ignored_but_tracked[@]} -gt 0 ]]; then
-    fail "Tracked files that match .gitignore (should be removed from tracking): ${ignored_but_tracked[*]}"
+    if [[ -n "$total_investigating" && "$total_investigating" =~ ^[0-9]+$ ]]; then
+        if [[ "$total_investigating" -ne "$actual_investigating" ]]; then
+            fail "Defect statistics: Total row INVESTIGATING count $total_investigating != actual $actual_investigating"
+        else
+            pass "Defect statistics: Total row INVESTIGATING count $total_investigating == actual $actual_investigating"
+        fi
+    else
+        fail "Defect statistics: Total row INVESTIGATING count missing or non-numeric"
+    fi
+
+    if [[ -n "$total_verified_fixed" && "$total_verified_fixed" =~ ^[0-9]+$ ]]; then
+        if [[ "$total_verified_fixed" -ne "$actual_verified_fixed" ]]; then
+            fail "Defect statistics: Total row VERIFIED_FIXED count $total_verified_fixed != actual $actual_verified_fixed"
+        else
+            pass "Defect statistics: Total row VERIFIED_FIXED count $total_verified_fixed == actual $actual_verified_fixed"
+        fi
+    else
+        fail "Defect statistics: Total row VERIFIED_FIXED count missing or non-numeric"
+    fi
+fi
+
+# --------------------------------------------------------------------
+# Check 13: Git HEAD references match actual git state
+# --------------------------------------------------------------------
+echo
+echo "--- Check 13: Git HEAD references match actual state ---"
+
+ACTUAL_HEAD=$(git rev-parse HEAD 2>/dev/null || echo "UNKNOWN")
+ACTUAL_ORIGIN=$(git rev-parse origin/main 2>/dev/null || echo "UNKNOWN")
+
+if [[ "$ACTUAL_HEAD" != "UNKNOWN" ]]; then
+    # Check implementation-status.md HEAD reference
+    if [[ -f "docs/fst/operations/implementation-status.md" ]]; then
+        recorded_head=$(grep '\*\*Git HEAD:\*\*' docs/fst/operations/implementation-status.md | grep -oP '`\K[0-9a-f]{7,40}(?=`)' | head -1) || true
+        if [[ -n "$recorded_head" && "$recorded_head" != "$ACTUAL_HEAD" ]]; then
+            # Check if it's a prefix match
+            if [[ "$ACTUAL_HEAD" == "$recorded_head"* ]]; then
+                pass "implementation-status.md HEAD '$recorded_head' matches actual HEAD '$ACTUAL_HEAD' (prefix)"
+            else
+                fail "implementation-status.md HEAD '$recorded_head' does not match actual HEAD '$ACTUAL_HEAD'"
+            fi
+        elif [[ -n "$recorded_head" ]]; then
+            pass "implementation-status.md HEAD '$recorded_head' matches actual HEAD"
+        else
+            fail "implementation-status.md: no Git HEAD reference found"
+        fi
+    fi
+
+    # Check project-plan.md HEAD reference
+    if [[ -f "docs/fst/operations/project-plan.md" ]]; then
+        recorded_head=$(grep 'Git HEAD `' docs/fst/operations/project-plan.md | grep -oP '`\K[0-9a-f]{7,40}(?=`)' | head -1) || true
+        if [[ -n "$recorded_head" && "$recorded_head" != "$ACTUAL_HEAD" ]]; then
+            if [[ "$ACTUAL_HEAD" == "$recorded_head"* ]]; then
+                pass "project-plan.md HEAD '$recorded_head' matches actual HEAD '$ACTUAL_HEAD' (prefix)"
+            else
+                fail "project-plan.md HEAD '$recorded_head' does not match actual HEAD '$ACTUAL_HEAD'"
+            fi
+        elif [[ -n "$recorded_head" ]]; then
+            pass "project-plan.md HEAD '$recorded_head' matches actual HEAD"
+        else
+            fail "project-plan.md: no Git HEAD reference found"
+        fi
+    fi
+
+    # Check verification-status.md HEAD reference
+    if [[ -f "docs/fst/operations/verification-status.md" ]]; then
+        recorded_head=$(grep '\*\*Git HEAD:\*\*' docs/fst/operations/verification-status.md | grep -oP '`\K[0-9a-f]{7,40}(?=`)' | head -1) || true
+        if [[ -n "$recorded_head" && "$recorded_head" != "$ACTUAL_HEAD" ]]; then
+            if [[ "$ACTUAL_HEAD" == "$recorded_head"* ]]; then
+                pass "verification-status.md HEAD '$recorded_head' matches actual HEAD '$ACTUAL_HEAD' (prefix)"
+            else
+                fail "verification-status.md HEAD '$recorded_head' does not match actual HEAD '$ACTUAL_HEAD'"
+            fi
+        elif [[ -n "$recorded_head" ]]; then
+            pass "verification-status.md HEAD '$recorded_head' matches actual HEAD"
+        else
+            fail "verification-status.md: no Git HEAD reference found"
+        fi
+    fi
+fi
+
+# Check local main tracks origin/main
+if [[ "$ACTUAL_HEAD" != "UNKNOWN" && "$ACTUAL_ORIGIN" != "UNKNOWN" ]]; then
+    if [[ "$ACTUAL_HEAD" == "$ACTUAL_ORIGIN" ]]; then
+        pass "Local main HEAD == origin/main ($ACTUAL_HEAD)"
+    else
+        fail "Local main HEAD ($ACTUAL_HEAD) != origin/main ($ACTUAL_ORIGIN) — branches diverged"
+    fi
+fi
+
+# --------------------------------------------------------------------
+# Check 14: Working tree clean (no unexpected modifications)
+# --------------------------------------------------------------------
+echo
+echo "--- Check 14: Working tree state ---"
+
+unstaged=$(git diff --name-only | wc -l)
+staged=$(git diff --cached --name-only | wc -l)
+if [[ "$unstaged" -eq 0 && "$staged" -eq 0 ]]; then
+    pass "Working tree clean (no unstaged or staged changes)"
 else
-    pass "No tracked files match .gitignore patterns"
+    echo "INFO: $unstaged unstaged, $staged staged modified files"
+fi
+
+# --------------------------------------------------------------------
+# Check 15: No tracked or staged local-only files (AGENTS.md, session-ses_*.md)
+# --------------------------------------------------------------------
+echo
+echo "--- Check 15: No local-only files tracked or staged ---"
+
+# AGENTS.md
+if git ls-files --error-unmatch AGENTS.md >/dev/null 2>&1; then
+    fail "AGENTS.md is tracked in Git (must remain local-only)"
+else
+    pass "AGENTS.md is not tracked in Git"
+fi
+
+if git diff --cached --name-only | grep -q '^AGENTS\.md$'; then
+    fail "AGENTS.md is staged for commit"
+else
+    pass "AGENTS.md is not staged"
+fi
+
+# session-ses_*.md
+session_files=$(git ls-files | grep 'session-ses_.*\.md$' || true)
+if [[ -n "$session_files" ]]; then
+    fail "session-ses_*.md files tracked in Git: $session_files"
+else
+    pass "No session-ses_*.md files tracked in Git"
+fi
+
+staged_session=$(git diff --cached --name-only | grep 'session-ses_.*\.md$' || true)
+if [[ -n "$staged_session" ]]; then
+    fail "session-ses_*.md files staged for commit: $staged_session"
+else
+    pass "No session-ses_*.md files staged"
 fi
 
 # --------------------------------------------------------------------

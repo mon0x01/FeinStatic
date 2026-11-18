@@ -13,16 +13,16 @@ This document is the single source of truth for FST scope and implementation ord
 - Development roadmap (`docs/fst/roadmap/development-roadmap.md`)
 - Architecture specifications and ADRs (`docs/fst/architecture/`, `docs/fst/adr/`)
 - Research register and dependency assessment (`docs/fst/research/research-register.md`)
-- Actual current implementation and unfinished milestones (Git HEAD `87919e8`)
+- Actual current implementation and unfinished milestones (Git HEAD `52341a04d2ac095b64df1bcc8d11790dfc179950`)
 
 ## Phase Overview
 
 | Phase | ID | Title | Status | Purpose |
 |-------|----|-------|--------|---------|
 | 0 | FST-PHASE-00 | Project Foundation & Documentation | COMPLETE | Establish FST identity, principles, decisions, research methodology, FeinStatic baseline |
-| 1 | FST-PHASE-01 | Specification & Foundational Research | IN_PROGRESS | Protocol specification, consensus/Sybil/transaction research, adversary model, node architecture |
-| 2 | FST-PHASE-02 | P2P Networking Foundation | IN_PROGRESS | Node identity, peer discovery, secure sessions, message dispatch, peer admission, bootstrap, peer exchange |
-| 3 | FST-PHASE-03 | Consensus & Validator Architecture | IN_PROGRESS | Permissionless consensus, Sybil resistance, validator entry/exit, finality — owner decisions D-015/D-016/D-017/D-037 now APPROVED via ADRs; CometBFT feasibility spike in progress |
+| 1 | FST-PHASE-01 | Specification & Foundational Research | COMPLETE | Protocol specification, consensus/Sybil/transaction research, adversary model, node architecture |
+| 2 | FST-PHASE-02 | P2P Networking Foundation | COMPLETE | Node identity, peer discovery, secure sessions, message dispatch, peer admission, bootstrap, peer exchange |
+| 3 | FST-PHASE-03 | Consensus & Validator Architecture | IN_PROGRESS | Permissionless consensus, Sybil resistance, validator entry/exit, finality — owner decisions D-015/D-016/D-017/D-037 now APPROVED via ADRs; CometBFT feasibility spike complete |
 | 4 | FST-PHASE-04 | Transaction & State Layer | IN_PROGRESS | Transaction model, mempool, state transitions, fee market — owner decision D-037 APPROVED via ADR-0002; UTXO foundation next |
 | 5 | FST-PHASE-05 | Financial Functionality | DEFERRED | Accounts, payments, settlement, exchange, merchant/institutional — incremental after core network |
 | 6 | FST-PHASE-06 | Privacy & Offline Operation | DEFERRED | Transaction confidentiality, selective disclosure, bounded offline spending — requires research |
@@ -464,7 +464,7 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 
 ---
 
-## Current Status Summary (as of 2026-11-17, Git HEAD `87919e8`)
+## Current Status Summary (as of 2026-11-18, Git HEAD `52341a04d2ac095b64df1bcc8d11790dfc179950`)
 
 | Phase | Requirements | IMPLEMENTED | PARTIALLY_IMPLEMENTED | IN_PROGRESS | NOT_STARTED | BLOCKED | DEFERRED |
 |-------|--------------|-------------|----------------------|-------------|-------------|---------|----------|
@@ -482,13 +482,13 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 | Cross-cutting | 9 | 0 | 0 | 9 | 0 | 0 | 0 |
 | **Total** | **74** | **36** | **4** | **13** | **0** | **0** | **21** |
 
-**Active work:** Phase 2 complete (all 11 requirements IMPLEMENTED and VERIFIED; 29 harness tests pass, 271/271 total tests pass; capability matrix reclassified BASELINE→VERIFIED, 59 capabilities). Phase 3 and Phase 4 are now UNBLOCKED: owner decisions D-015, D-016, D-017, D-037 are APPROVED and recorded via ADRs ADR-0002/ADR-0003/ADR-0004/ADR-0005.
+**Active work:** Phases 0–2 are COMPLETE (verified per ordering constraint). Phase 3 and Phase 4 are UNBLOCKED: owner decisions D-015, D-016, D-017, D-037 are APPROVED and recorded via ADRs ADR-0002/ADR-0003/ADR-0004/ADR-0005. Current focus: fixing Release-mode timing failures (FST-BUG-0017), ASan CometBFT integration abort, and test binary hang after CometBFT tests.
 
-**Blocked work:** None — Phases 3–4 unblocked by owner decisions. CometBFT production dependency remains subject to the mandatory feasibility spike (ADR-0004) before commitment.
+**Blocked work:** None — Phases 3–4 unblocked by owner decisions. CometBFT production dependency remains subject to mandatory feasibility validation before production commitment.
 
 **Deferred work:** Phases 5–10 (20 requirements) correctly deferred per P13 (core network first).
 
-**Next engineering task:** Fix Release-mode timing failure (FST-BUG-0017 — `harness_peer_record_request_response_discovery`, `harness_peer_record_announce_discovery`, `harness_expired_and_stale_records_rejected` fail in Release builds due to dispatch worker startup race). Then fix ASan CometBFT integration abort and test binary hang after CometBFT tests. Then evaluate merging implementation work from `main-dev-backup-20261117` to main.
+**Next engineering task:** Fix FST-BUG-0017 Release-mode harness timing failures using correct synchronization (polling-based waits instead of fixed sleeps). Then diagnose and fix the ASan CometBFT integration abort. Then fix test-process shutdown hangs after CometBFT tests. Then execute TSan and investigate its findings.
 
 ---
 
