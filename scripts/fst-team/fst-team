@@ -47,15 +47,24 @@ LOCK_DIR="$STATE_DIR/locks"
 INTEGRATION_WORKTREE="/home/monil/Desktop/CXX/FeinStatic-agents/integration"
 
 declare -A AGENT_WORKTREE=(
+  [fst-research]="/home/monil/Desktop/CXX/FeinStatic-agents/research"
   [fst-implementation]="/home/monil/Desktop/CXX/FeinStatic-agents/implementation"
   [fst-verification]="/home/monil/Desktop/CXX/FeinStatic-agents/verification"
   [fst-debugging]="/home/monil/Desktop/CXX/FeinStatic-agents/debugging"
 )
 
 declare -A AGENT_LEDGER=(
+  [fst-research]="docs/fst/operations/research-status.md"
   [fst-implementation]="docs/fst/operations/implementation-status.md"
   [fst-verification]="docs/fst/operations/verification-status.md"
   [fst-debugging]="docs/fst/operations/defect-register.md"
+)
+
+declare -A AGENT_BRANCH=(
+  [fst-research]="team/research"
+  [fst-implementation]="team/implementation"
+  [fst-verification]="team/verification"
+  [fst-debugging]="team/debugging"
 )
 
 KILO_BIN="kilo"
@@ -157,7 +166,7 @@ init_file() {
 
 init_state() {
   mkdir -p "$AGENT_DIR" "$SESSION_DIR" "$TASK_DIR" "$LOG_DIR" "$LOCK_DIR"
-  for a in fst-implementation fst-verification fst-debugging; do
+  for a in fst-research fst-implementation fst-verification fst-debugging; do
     init_file "$AGENT_DIR/$a.json" '{"session_id":"","pid":"","log_file":"","task":"","status":"idle","started_at":""}'
   done
 }
@@ -281,7 +290,8 @@ cmd_doctor() {
 
   echo "--- Agent definitions ---"
   local ask_found=0
-  for f in /home/monil/Desktop/CXX/FeinStatic-agents/integration/.kilo/agents/fst-*.md; do
+  for f in /home/monil/Desktop/CXX/FeinStatic-agents/integration/.kilo/agents/fst-research.md /home/monil/Desktop/CXX/FeinStatic-agents/integration/.kilo/agents/fst-*.md; do
+    [ -f "$f" ] || continue
     local name
     name="$(basename "$f")"
     if grep -q 'bash: ask' "$f" 2>/dev/null; then
@@ -297,7 +307,7 @@ cmd_doctor() {
   echo ""
 
   echo "--- Worktrees ---"
-  for agent in fst-implementation fst-verification fst-debugging; do
+  for agent in fst-research fst-implementation fst-verification fst-debugging; do
     local wt="${AGENT_WORKTREE[$agent]}"
     if [ -d "$wt" ]; then
       local branch head status
@@ -336,7 +346,7 @@ cmd_status() {
   echo ""
 
   echo "--- Agents ---"
-  for agent in fst-implementation fst-verification fst-debugging; do
+  for agent in fst-research fst-implementation fst-verification fst-debugging; do
     local wt="${AGENT_WORKTREE[$agent]}"
     local session_id pid log_file busy_status
     session_id="$(get_agent_session_id "$agent")"
@@ -420,13 +430,13 @@ cmd_dispatch() {
   local task="${2:-}"
 
   if [ -z "$agent" ] || [ -z "$task" ]; then
-    echo "Usage: fst-team dispatch <agent> <task>" >&2
-    echo "  Agents: fst-implementation, fst-verification, fst-debugging" >&2
-    exit 4
+  echo "Usage: fst-team dispatch <agent> <task>" >&2
+  echo "  Agents: fst-research, fst-implementation, fst-verification, fst-debugging" >&2
+  exit 4
   fi
 
   if ! is_valid_agent "$agent"; then
-    echo "ERROR: unknown agent '$agent'. Valid: fst-implementation, fst-verification, fst-debugging" >&2
+    echo "ERROR: unknown agent '$agent'. Valid: fst-research, fst-implementation, fst-verification, fst-debugging" >&2
     exit 4
   fi
 
@@ -452,30 +462,76 @@ cmd_dispatch() {
   # Write task file
   echo "{\"agent\":\"$agent\",\"task\":\"$(echo "$task" | sed 's/"/\\"/g')\",\"status\":\"pending\",\"created_at\":\"$started_at\",\"log_file\":\"$log_file\"}" > "$TASK_DIR/$task_id.json"
 
-  # Launch kilo run in background (detached)
-  # Output is block-buffered when not a TTY; collect reads the log after exit.
-  "$KILO_BIN" run \
-    --agent "$agent" \
-    --dir "$worktree" \
-    --format json \
-    --auto \
-    --title "fst-team: $task" \
-    "$task" > "$log_file" 2>&1 &
+  # Session IDs already present in this worktree before launch (used to detect the new session).
+  local before_sessions=""
+  before_sessions="$("$KILO_BIN" session list --format json 2>/dev/null \
+    | python3 -c "
+import json, sys, os
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+wt = os.environ.get('WT','')
+print(' '.join(s.get('id','') for s in data if s.get('directory') == wt))
+" 2>/dev/null)"
+  WT="$worktree"
+  export WT
+  export BEFORE="$before_sessions"
+
+  # Launch kilo run in background (detached). A subshell captures the actual
+  (
+    "$KILO_BIN" run \
+      --agent "$agent" \
+      --dir "$worktree" \
+      --format json \
+      --auto \
+      --title "fst-team: $task" \
+      "$task" > "$log_file" 2>&1
+    echo $? > "$LOG_DIR/${task_id}.exit"
+  ) &
   local pid=$!
 
-  # Disown so the process survives after this script exits
+  # Disown so the process survives after this script exits.
   disown "$pid" 2>/dev/null || true
 
-  # Try to capture session ID quickly (may be empty if output is buffered)
+  # Persist session ID from verified Kilo CLI output (kilo session list), not
+  # from buffered log greps. This fixes the previous "(none)" session IDs.
   local session_id=""
   local waited=0
-  while [ "$waited" -lt 10 ]; do
-    session_id="$(extract_session_id "$log_file")"
-    if [ -n "$session_id" ]; then
+  while [ "$waited" -lt 20 ]; do
+    # Process may still be running; session appears in kilo session list once created.
+    local new_sessions
+    new_sessions="$("$KILO_BIN" session list --format json 2>/dev/null \
+      | python3 -c "
+import json, sys, os
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+wt = os.environ.get('WT','')
+before = set(os.environ.get('BEFORE','').split())
+print(' '.join(s.get('id','') for s in data if s.get('directory') == wt and s.get('id','') not in before))
+" 2>/dev/null)"
+    if [ -n "$new_sessions" ]; then
+      session_id="$(echo "$new_sessions" | awk '{print $1}')"
       break
     fi
     if ! kill -0 "$pid" 2>/dev/null; then
-      session_id="$(extract_session_id "$log_file")"
+      # Process exited; try once more to pick up any session it created.
+      new_sessions="$("$KILO_BIN" session list --format json 2>/dev/null \
+        | python3 -c "
+import json, sys, os
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+wt = os.environ.get('WT','')
+before = set(os.environ.get('BEFORE','').split())
+print(' '.join(s.get('id','') for s in data if s.get('directory') == wt and s.get('id','') not in before))
+" 2>/dev/null)"
+      if [ -n "$new_sessions" ]; then
+        session_id="$(echo "$new_sessions" | awk '{print $1}')"
+      fi
       break
     fi
     sleep 1
@@ -486,7 +542,7 @@ cmd_dispatch() {
   echo "{\"session_id\":\"$session_id\",\"pid\":\"$pid\",\"log_file\":\"$log_file\",\"task\":\"$task\",\"status\":\"running\",\"started_at\":\"$started_at\"}" > "$AGENT_DIR/$agent.json"
 
   # Write session state
-  echo "{\"session_id\":\"$session_id\",\"agent\":\"$agent\",\"task\":\"$task\",\"pid\":\"$pid\",\"log_file\":\"$log_file\",\"status\":\"running\",\"started_at\":\"$started_at\"}" > "$SESSION_DIR/${session_id:-$task_id}.json"
+  echo "{\"session_id\":\"$session_id\",\"agent\":\"$agent\",\"task\":\"$task\",\"task_id\":\"$task_id\",\"pid\":\"$pid\",\"log_file\":\"$log_file\",\"status\":\"running\",\"started_at\":\"$started_at\"}" > "$SESSION_DIR/${session_id:-$task_id}.json"
 
   # Update task status
   json_write "$TASK_DIR/$task_id.json" "status" "running"
@@ -494,9 +550,10 @@ cmd_dispatch() {
   json_write "$TASK_DIR/$task_id.json" "pid" "$pid"
   json_write "$TASK_DIR/$task_id.json" "started_at" "$started_at"
 
-  echo "  Session ID: ${session_id:-(buffered — will be available after collect)}"
+  echo "  Session ID: ${session_id:-(pending — will be resolved on collect)}"
   echo "  PID: $pid"
   echo "  Log: $log_file"
+  echo "  Exit-code file: $LOG_DIR/${task_id}.exit"
   echo "  Status: dispatched (running in background)"
   echo ""
   echo "  Use: fst-team collect $task_id   (to wait for completion and get results)"
@@ -513,13 +570,15 @@ cmd_collect() {
   init_state
 
   # Resolve session ID from task ID if needed
-  local session_id agent pid log_file
+  local session_id agent pid log_file task_id
   if echo "$session_id_or_task" | grep -q '^ses_'; then
     session_id="$session_id_or_task"
     agent="$(json_read "$SESSION_DIR/$session_id.json" "agent")"
     pid="$(json_read "$SESSION_DIR/$session_id.json" "pid")"
     log_file="$(json_read "$SESSION_DIR/$session_id.json" "log_file")"
+    task_id="$(json_read "$SESSION_DIR/$session_id.json" "task_id")"
   elif [ -f "$TASK_DIR/$session_id_or_task.json" ]; then
+    task_id="$session_id_or_task"
     agent="$(json_read "$TASK_DIR/$session_id_or_task.json" "agent")"
     pid="$(json_read "$TASK_DIR/$session_id_or_task.json" "pid")"
     log_file="$(json_read "$TASK_DIR/$session_id_or_task.json" "log_file")"
@@ -538,11 +597,12 @@ cmd_collect() {
   echo "  Agent: ${agent:-(unknown)}"
   echo "  Log: $log_file"
 
-  # Wait for process to complete if still running
+  # Wait for process to complete if still running, then read the actual exit
+  # code captured by the dispatch subshell sidecar file.
   local exit_code=0
+  local exit_file="$LOG_DIR/${task_id}.exit"
   if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
     echo "  Waiting for process (PID $pid) to complete..."
-    # Poll until process exits (can't use wait on disowned/orphaned process)
     local waited=0
     while [ "$waited" -lt "$MAX_WAIT_SECONDS" ]; do
       if ! kill -0 "$pid" 2>/dev/null; then
@@ -551,19 +611,14 @@ cmd_collect() {
       sleep "$SESSION_POLL_INTERVAL"
       waited=$((waited + SESSION_POLL_INTERVAL))
     done
-    # Process is gone; assume success if we have log output
-    if [ -s "$log_file" ]; then
-      exit_code=0
-    else
-      exit_code=1
-    fi
+  fi
+  if [ -f "$exit_file" ]; then
+    exit_code="$(cat "$exit_file" 2>/dev/null | tr -d '[:space:]')"
+    [ -z "$exit_code" ] && exit_code=0
+  elif [ -s "$log_file" ]; then
+    exit_code=0
   else
-    # Process already exited; check if we have output
-    if [ -s "$log_file" ]; then
-      exit_code=0
-    else
-      exit_code=1
-    fi
+    exit_code=1
   fi
 
   echo "  Status: COMPLETED (exit code: $exit_code)"
@@ -645,8 +700,8 @@ cmd_sync() {
   echo "=== fst-team sync ==="
   echo ""
 
-  echo "--- Inspecting all four worktrees ---"
-  for agent in fst-integration fst-implementation fst-verification fst-debugging; do
+  echo "--- Inspecting all five worktrees ---"
+  for agent in fst-integration fst-research fst-implementation fst-verification fst-debugging; do
     local wt
     if [ "$agent" = "fst-integration" ]; then
       wt="$INTEGRATION_WORKTREE"
@@ -678,6 +733,11 @@ cmd_sync() {
 
   echo "--- Reading defect register from team/debugging ref ---"
   git show team/debugging:docs/fst/operations/defect-register.md 2>/dev/null | head -10
+  echo "..."
+  echo ""
+
+  echo "--- Reading research ledger from team/research ref ---"
+  git show team/research:docs/fst/operations/research-status.md 2>/dev/null | head -10
   echo "..."
   echo ""
 
@@ -743,7 +803,7 @@ main() {
       echo "  stop <session_id>             Stop a running session"
       echo "  doctor                        Health check: CLI, agents, worktrees, state"
       echo ""
-      echo "Agents: fst-implementation, fst-verification, fst-debugging"
+      echo "Agents: fst-research, fst-implementation, fst-verification, fst-debugging"
       echo "State: $STATE_DIR (runtime-only, never committed)"
       exit 4
       ;;

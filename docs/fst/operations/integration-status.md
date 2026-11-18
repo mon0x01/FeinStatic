@@ -2,6 +2,16 @@
 
 This ledger is owned exclusively by the Integration Agent (fst-integration). No other agent may edit it.
 
+---
+
+## Charter and role obligations (permanent five-agent model)
+
+This ledger is owned exclusively by the Integration Agent (fst-integration), which centrally coordinates work, resolves ownership, manages handoffs, and integrates accepted changes. Integration is the coordinator, not the owner of the other agents' technical decisions. Research is a mandatory gate for significant technology or architecture selections; the Research Agent (fst-research) owns `docs/fst/operations/research-status.md` and proposes ADRs under `docs/fst/architecture/research-proposals/`. The common authoritative doctrine is `docs/fst/engineering-charter.md`; this ledger links to it rather than duplicating it. Classification and closure conditions for outstanding matters are in `docs/fst/decisions/decision-closure-roadmap.md`. Research-before-implementation, technology-selection evidence, independent verification, exact-SHA handoffs, security and reliability gates, future-phase compatibility, and owner-versus-delegated decision boundaries are defined in the charter.
+
+This agent writes only `docs/fst/operations/integration-status.md`. It never edits the implementation, verification, defect, or research ledgers.
+
+---
+
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
 - Baseline commit SHA: `a89ccd8` (HEAD of `team/integration`; merge of `bdb07fd` fst-debugging FST-BUG-0014/0015 fix; prior baseline `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` is an ancestor, verified)
@@ -12,26 +22,27 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 | Task | Assigned agent | Branch | Worktree | Status |
 |------|----------------|--------|----------|--------|
 | IS-01 | Integration ledger initialization (baseline, reservations, sync protocol, YOLO verification) | `fst-integration` | `team/integration` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | COMPLETE |
-| IT-01 | Phase 3 completion: FST-REQ-0036 finality & fork choice, FST-REQ-0037 validator entry & exit, FST-REQ-0038 consensus networking, FST-REQ-0039 multi-node consensus test network (≥4 validators, Byzantine finality) — DISPATCHED to fst-implementation (task_1795032666) | `fst-implementation` | `team/implementation` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | IN_PROGRESS (dispatched) |
-| VT-01 | Targeted verification of incoming feature handoffs (per-commit: exact SHA + build preset + command + exit code + log); comprehensive five-preset + full suite verification scheduled after implementation + integration complete — DISPATCHED to fst-verification (task_1795032669): re-run TSan suite in isolation | `fst-verification` | `team/verification` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | IN_PROGRESS (dispatched) |
+| IT-01 | Phase 3 completion: FST-REQ-0036 finality & fork choice, FST-REQ-0037 validator entry & exit, FST-REQ-0038 consensus networking, FST-REQ-0039 multi-node consensus test network (≥4 validators, Byzantine finality) — DISPATCHED to fst-implementation (task_1795032666) | `fst-implementation` | `team/implementation` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | COMPLETE |
+| VT-01 | Targeted verification of incoming feature handoffs (per-commit: exact SHA + build preset + command + exit code + log); comprehensive five-preset + full suite verification scheduled after implementation + integration complete — DISPATCHED to fst-verification (task_1795032669): re-run TSan suite in isolation | `fst-verification` | `team/verification` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | COMPLETE |
 | DT-01 | Defect FST-BUG-0017 Release-mode timing failures (harness tests) — DEFERRED to Phase 4; no source modifications yet; inventory existing evidence only | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | DEFERRED |
 | DT-02 | Defects FST-BUG-0014 / FST-BUG-0015 TSan Boost.Asio socket races — DEFERRED to Phase 4; no source modifications yet; inventory existing evidence only | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | DEFERRED |
 | DT-03 | Defect FST-BUG-0013 SecureSession handshake_result_ cross-thread race — DEFERRED to Phase 4; no source modifications yet; inventory existing evidence only | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | DEFERRED |
-| VDEF-fix | VDEF-2026-11-18-001 ASan SEGV abci_codec.cpp:674 + VDEF-2026-11-18-002 TSan races abci_socket_server.cpp:270/:273 — DISPATCHED to fst-debugging (task_1795032671) | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | IN_PROGRESS (dispatched) |
+| VDEF-fix | VDEF-2026-11-18-001 ASan SEGV abci_codec.cpp:674 + VDEF-2026-11-18-002 TSan races abci_socket_server.cpp:270/:273 — DISPATCHED to fst-debugging (task_1795032671) | `fst-debugging` | `team/debugging` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | COMPLETE |
+| RS-01 | Five-agent migration and research agent setup — fst-research agent definition, research-status ledger, engineering charter, decision closure roadmap, team/research worktree, five-agent controller extension, AGENTS.md sync, read-only research pilot | `fst-research` | `team/research` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | IN_PROGRESS |
 
 ## Source-file ownership reservations
 | File/path | Reserved for | Reserved by | Active task | Since |
 |-----------|--------------|-------------|-------------|-------|
-| include/feinstat/consensus/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| src/consensus/** (excluding abci/abci_codec.cpp and abci/abci_socket_server.cpp) | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| src/consensus/abci/abci_codec.cpp | VDEF-2026-11-18-001 fix | `fst-debugging` | VDEF fix (IN_PROGRESS) | 2026-11-18 |
-| src/consensus/abci/abci_socket_server.cpp | VDEF-2026-11-18-002 fix | `fst-debugging` | VDEF fix (IN_PROGRESS) | 2026-11-18 |
-| include/feinstat/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| src/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| include/feinstat/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| src/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| tests/abci_tests.cpp | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| tests/cometbft_integration_tests.cpp | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
+| include/feinstat/consensus/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| src/consensus/** (excluding abci/abci_codec.cpp and abci/abci_socket_server.cpp) | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| src/consensus/abci/abci_codec.cpp | VDEF-2026-11-18-001 fix | `fst-debugging` | VDEF fix (COMPLETE — reservation cleared) | 2026-11-18 |
+| src/consensus/abci/abci_socket_server.cpp | VDEF-2026-11-18-002 fix | `fst-debugging` | VDEF fix (COMPLETE — reservation cleared) | 2026-11-18 |
+| include/feinstat/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| src/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| include/feinstat/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| src/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| tests/abci_tests.cpp | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
+| tests/cometbft_integration_tests.cpp | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
 | tests/network_harness_tests.cpp | Defect FST-BUG-0017 (DT-01) | `fst-debugging` | DT-01 (DEFERRED) | 2026-11-18 |
 | tests/network_harness.cpp | Defect FST-BUG-0017 (DT-01) | `fst-debugging` | DT-01 (DEFERRED) | 2026-11-18 |
 | src/network/secure_session.cpp | Defects FST-BUG-0013 / FST-BUG-0014 / FST-BUG-0015 (DT-02 / DT-03) | `fst-debugging` | DT-02 / DT-03 (DEFERRED) | 2026-11-18 |
@@ -116,13 +127,14 @@ Gate evaluation: FST-BUG-0013/0014/0015 fixes verified at 0773794 = PASS (debug 
 | team/implementation | `team/implementation` | `fst-implementation` | `docs/fst/operations/implementation-status.md` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` |
 | team/verification | `team/verification` | `fst-verification` | `docs/fst/operations/verification-status.md` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` |
 | team/debugging | `team/debugging` | `fst-debugging` | `docs/fst/operations/defect-register.md` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` |
+| team/research | `team/research` | `fst-research` | `docs/fst/operations/research-status.md` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` |
 
-All four worktrees are linked worktrees of the repo at `/home/monil/Desktop/CXX/FeinStatic`. They share the object store and the ref namespace, so a commit on any `team/*` branch is immediately visible to the other worktrees (no `git fetch` required to obtain objects; `git fetch` is a harmless no-op for shared refs). Remote: `origin` = `https://github.com/mon0x01/FeinStatic.git`. `team/*` branches must never be pushed unless explicitly authorized; never push directly to `main`.
+All five worktrees are linked worktrees of the repo at `/home/monil/Desktop/CXX/FeinStatic`. They share the object store and the ref namespace, so a commit on any `team/*` branch is immediately visible to the other worktrees (no `git fetch` required to obtain objects; `git fetch` is a harmless no-op for shared refs). Remote: `origin` = `https://github.com/mon0x01/FeinStatic.git`. `team/*` branches must never be pushed unless explicitly authorized; never push directly to `main`.
 
 ### Ledger ownership and read rules
-1. **Each agent writes only its own ledger.** No agent may edit another role's ledger. The Integration Agent may not edit implementation/verification/defect ledgers; likewise for the other roles.
+1. **Each agent writes only its own ledger.** No agent may edit another role's ledger. The Integration Agent may not edit implementation/verification/defect/research ledgers; likewise for the other roles. The Research Agent owns `docs/fst/operations/research-status.md` and writes only there plus `docs/fst/research/**` and `docs/fst/architecture/research-proposals/**`.
 2. **The integration ledger's latest committed version is read from `team/integration`:** `git show team/integration:docs/fst/operations/integration-status.md`.
-3. **Each other role's ledger is read from its respective team branch ref** (never assume the local worktree copy is current): `git show team/implementation:docs/fst/operations/implementation-status.md`, `git show team/verification:docs/fst/operations/verification-status.md`, `git show team/debugging:docs/fst/operations/defect-register.md`.
+3. **Each other role's ledger is read from its respective team branch ref** (never assume the local worktree copy is current): `git show team/implementation:docs/fst/operations/implementation-status.md`, `git show team/verification:docs/fst/operations/verification-status.md`, `git show team/debugging:docs/fst/operations/defect-register.md`, `git show team/research:docs/fst/operations/research-status.md`.
 4. Worktree copies may be out of date relative to the branch ref. Always verify against the branch ref before editing or relying on a ledger. Re-read `integration-status.md` at every `continue` (cold-start) and before editing any source file (reservation check).
 
 ### Operating rules
@@ -176,19 +188,20 @@ Runtime state is stored outside Git at `~/.local/state/fst-team/` (never committ
 | `stop` | `fst-team stop <session_id>` | Stop a running session |
 | `doctor` | `fst-team doctor` | Health check: Kilo CLI, agent definitions, worktrees, state |
 
-Agents: `fst-implementation`, `fst-verification`, `fst-debugging`.
-
+Agents: `fst-research`, `fst-implementation`, `fst-verification`, `fst-debugging`. Coordination: `fst-integration`.
 ### Continue workflow (Integration Agent)
+
 When the user types `continue` in the Integration Kilo session:
 
-1. **Read**: AGENTS.md, project-plan.md, and all four latest ledgers (read integration ledger from `team/integration` ref; read other ledgers from their respective branch refs via `git show team/<role>:<ledger>`).
+1. **Read**: AGENTS.md, `docs/fst/engineering-charter.md`, `docs/fst/decisions/decision-closure-roadmap.md`, project-plan.md, and all five latest ledgers (integration ledger from `team/integration` ref; other ledgers from their respective branch refs via `git show team/<role>:<ledger>`, including `team/research`).
 2. **Inspect**: `fst-team status` — check agent availability, worktree branches, source-file ownership reservations in `integration-status.md`.
-3. **Discover**: Identify next eligible tasks from project-plan.md respecting task priority and dependencies.
-4. **Dispatch**: `fst-team dispatch <agent> <task>` — send implementation, targeted verification, and permitted debugging work to the correct agents. Never assign conflicting source-file ownership.
+3. **Discover**: Identify architecture/technology decisions that must be researched before the next significant implementation. Dispatch Research to eligible investigations (research runs in parallel with independent engineering tasks when possible).
+4. **Dispatch**: `fst-team dispatch <agent> <task>` — send implementation work only for approved and sufficiently specified requirements; targeted verification to fst-verification; permitted debugging to fst-debugging; research to fst-research. Never assign conflicting source-file ownership.
 5. **Concurrency**: Independent tasks may run concurrently (dispatch to multiple agents simultaneously).
 6. **Collect**: `fst-team collect <task_id>` — wait for completion, require exact 40-character commit SHA, validate verification evidence against the exact commit being submitted.
-7. **Accept**: Only accept handoffs that pass the integration gate (Verification Agent's gate: exact SHA, build preset, command, exit code, log location).
+7. **Accept**: Only accept handoffs that pass the integration gate (Verification Agent's gate: exact SHA, build preset, command, exit code, log location). Require owner approval for decisions classified BLOCKED-ON-OWNER.
 8. **Update**: `integration-status.md` — record accepted commit SHA, update reservations, coordinate next cycle.
+9. **Schedule**: plan the next cycle; research continues to review relevant advances without automatically adopting the latest release.
 
 ### Safety rules
 - Each agent writes only its own ledger. No cross-editing.
@@ -214,26 +227,13 @@ This behavior is permanent and occurs automatically, not only on request.
    active tasks, source-file ownership reservations in `integration-status.md`.
 3. **Inspect**: all four branch heads, worktrees, active reservations, and
    outstanding handoffs.
-4. **Identify**: the next eligible, non-conflicting assignment for EACH of the
-   three specialist agents (fst-implementation, fst-verification, fst-debugging),
-   respecting task priority, dependencies, and source-file ownership reservations.
-5. **Dispatch**: all three agents concurrently using `fst-team dispatch <agent>
-   <task>`. Do NOT wait for fst-implementation to finish before dispatching
-   fst-verification or fst-debugging. Independent tasks run concurrently.
-6. **Session reuse**: use each agent's existing persistent Kilo session. Never
-   create duplicate sessions or duplicate tasks. A running agent must not receive
-   a duplicate task (duplicate dispatch prevented, exit code 2).
-7. **Coordinate**: allow the three agents to work independently while the
-   Integration Agent tracks their task IDs, session IDs, and process states via
-   `fst-team status`.
-8. **Collect**: `fst-team collect <task_id>` — wait for completion, verify actual
-   process exit codes, exact commit SHAs, and evidence. Do not falsely report
-   unfinished tasks as successful.
-9. **Process handoffs**: arrange targeted verification; accept only work that
-   meets the integration gate (Verification Agent's gate: exact SHA, build preset,
-   command, exit code, log location).
-10. **Update**: `integration-status.md` — record accepted commit SHAs, update
-    reservations, update handoff statuses, coordinate next cycle.
+4. **Identify**: the next eligible, non-conflicting assignment for each specialist agent (fst-research, fst-implementation, fst-verification, fst-debugging), respecting task priority, dependencies, research gates, and source-file ownership reservations. Research is dispatched to eligible investigations; implementation is dispatched only for approved and sufficiently specified work.
+5. **Dispatch**: all agents concurrently using `fst-team dispatch <agent> <task>`. Do NOT wait for fst-implementation to finish before dispatching fst-verification, fst-debugging, or fst-research. Independent tasks run concurrently. Research runs in parallel with independent engineering tasks when possible.
+6. **Session reuse**: use each agent's existing persistent Kilo session. Never create duplicate sessions or duplicate tasks. A running agent must not receive a duplicate task (duplicate dispatch prevented, exit code 2).
+7. **Coordinate**: allow the agents to work independently while the Integration Agent tracks their task IDs, session IDs, and process states via `fst-team status`.
+8. **Collect**: `fst-team collect <task_id>` — wait for completion, verify actual process exit codes, exact commit SHAs, and evidence. Do not falsely report unfinished tasks as successful.
+9. **Process handoffs**: arrange targeted verification; accept only work that meets the integration gate (Verification Agent's gate: exact SHA, build preset, command, exit code, log location). Require owner approval for decisions classified BLOCKED-ON-OWNER.
+10. **Update**: `integration-status.md` — record accepted commit SHAs, update reservations, update handoff statuses, coordinate next cycle.
 
 ### Persistent behavior
 
@@ -244,7 +244,5 @@ This behavior is permanent and occurs automatically, not only on request.
 - Do not push to `main`, change the approved FST scope, violate ledger ownership,
   or override the Phase 4 debugging priority (FST-BUG-0013/0014/0015/0017
   deferred to Phase 4 unless the user explicitly changes priority).
-- The desired operating model is three simultaneously working specialist agents,
-  continuously coordinated by Integration, with the owner providing only
-  `continue` and `stop` commands.
+- The desired operating model is four simultaneously working specialist agents (research, implementation, verification, debugging), continuously coordinated by Integration, with the owner providing only `continue` and `stop` commands.
 
