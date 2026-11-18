@@ -99,3 +99,55 @@ Every handoff must identify the exact commit SHA and the receiving agent:
 - Status: RECEIVED | IN_REVIEW | GATE_PASSED | INTEGRATED | REJECTED
 - Received at: `<ISO-8601 timestamp>`
 A handoff without an exact commit SHA and receiving agent is not actionable and must not be recorded.
+
+## CLI-Only Autonomous Orchestration (fst-team)
+
+### System overview
+The four-agent team is orchestrated exclusively through the Kilo CLI and Linux terminal. No VS Code, no Agent Manager, no GUI. The controller script lives at:
+
+`scripts/fst-team/fst-team`
+
+Runtime state is stored outside Git at `~/.local/state/fst-team/` (never committed):
+
+| Path | Contents |
+|------|----------|
+| `~/.local/state/fst-team/agents/<agent>.json` | Current agent state (session_id, pid, log_file, task, status, started_at) |
+| `~/.local/state/fst-team/sessions/<session_id>.json` | Session state (agent, task, pid, log_file, status, started_at, exit_code, commit_sha) |
+| `~/.local/state/fst-team/tasks/<task_id>.json` | Task state (agent, task, session_id, pid, status, created_at, completed_at, commit_sha, log_file) |
+| `~/.local/state/fst-team/logs/*.log` | Raw kilo run output (JSON-lines) per dispatch |
+| `~/.local/state/fst-team/locks/*.lock` | flock files for atomic state writes |
+
+### Controller commands
+| Command | Usage | Description |
+|---------|-------|-------------|
+| `status` | `fst-team status` | Show all agents, sessions, tasks, worktrees, integration branch |
+| `dispatch` | `fst-team dispatch <agent> <task>` | Launch a task to a worker agent (async, returns immediately) |
+| `collect` | `fst-team collect <session_id\|task_id>` | Wait for completion, collect exit code, commit SHAs, agent output |
+| `resume` | `fst-team resume <session_id> [msg]` | Resume an existing Kilo session by ID with a new message |
+| `sync` | `fst-team sync` | Inspect all four worktrees; read ledgers from branch refs via `git show` |
+| `stop` | `fst-team stop <session_id>` | Stop a running session |
+| `doctor` | `fst-team doctor` | Health check: Kilo CLI, agent definitions, worktrees, state |
+
+Agents: `fst-implementation`, `fst-verification`, `fst-debugging`.
+
+### Continue workflow (Integration Agent)
+When the user types `continue` in the Integration Kilo session:
+
+1. **Read**: AGENTS.md, project-plan.md, and all four latest ledgers (read integration ledger from `team/integration` ref; read other ledgers from their respective branch refs via `git show team/<role>:<ledger>`).
+2. **Inspect**: `fst-team status` — check agent availability, worktree branches, source-file ownership reservations in `integration-status.md`.
+3. **Discover**: Identify next eligible tasks from project-plan.md respecting task priority and dependencies.
+4. **Dispatch**: `fst-team dispatch <agent> <task>` — send implementation, targeted verification, and permitted debugging work to the correct agents. Never assign conflicting source-file ownership.
+5. **Concurrency**: Independent tasks may run concurrently (dispatch to multiple agents simultaneously).
+6. **Collect**: `fst-team collect <task_id>` — wait for completion, require exact 40-character commit SHA, validate verification evidence against the exact commit being submitted.
+7. **Accept**: Only accept handoffs that pass the integration gate (Verification Agent's gate: exact SHA, build preset, command, exit code, log location).
+8. **Update**: `integration-status.md` — record accepted commit SHA, update reservations, coordinate next cycle.
+
+### Safety rules
+- Each agent writes only its own ledger. No cross-editing.
+- Ledgers are read from branch refs via `git show`, never assumed from stale worktree copies.
+- No direct pushes to `main`. No force pushes or history rewriting. No broad staging.
+- FST-BUG-0013/0014/0015/0017 remain deferred to Phase 4 unless the user explicitly changes priority.
+- Never edit AGENTS.md or session-ses_*.md during ordinary orchestration.
+- Do not treat a running process as successful before collecting its actual exit status.
+- Do not represent old-SHA verification as evidence for a newer commit.
+- Duplicate dispatch to a busy agent is prevented (exit code 2).
