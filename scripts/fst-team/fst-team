@@ -37,7 +37,7 @@ set -uo pipefail
 # Constants and paths
 ###############################################################################
 
-STATE_DIR="$HOME/.local/state/fst-team"
+STATE_DIR="${FST_TEAM_STATE_DIR:-$HOME/.local/state/fst-team}"
 AGENT_DIR="$STATE_DIR/agents"
 SESSION_DIR="$STATE_DIR/sessions"
 TASK_DIR="$STATE_DIR/tasks"
@@ -227,31 +227,32 @@ is_agent_busy() {
   local agent="$1"
   local worktree="${AGENT_WORKTREE[$agent]}"
 
-  # Check kilo session list for busy sessions in this agent's worktree
-  local busy
-  WORKTREE="$worktree" busy="$("$KILO_BIN" session list --format json 2>/dev/null \
-    | python3 -c "
-import json, os, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-for s in data:
-    if s.get('directory') == os.environ['WORKTREE'] and s.get('status', {}).get('type') == 'busy':
-        print(s['id'])
-        sys.exit(0)
-" 2>/dev/null)"
-  if [ -n "$busy" ]; then
-    return 0
+  # Read agent state for active task
+  local pid task_id session_id
+  pid="$(json_read "$AGENT_DIR/$agent.json" "pid")"
+  task_id="$(json_read "$AGENT_DIR/$agent.json" "task_id")"
+  session_id="$(json_read "$AGENT_DIR/$agent.json" "session_id")"
+
+  # No PID recorded → no active task
+  if [ -z "$pid" ]; then
+    return 1
   fi
 
-  # Also check our state for active PIDs
-  local pid
-  pid="$(json_read "$AGENT_DIR/$agent.json" "pid")"
-  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    return 0
+  # If exit file exists, the bash wrapper has finished kilo run and wrote
+  # the exit code. Task is complete regardless of whether the wrapper PID
+  # is still briefly alive (it may be exiting).
+  if [ -n "$task_id" ] && [ -f "$LOG_DIR/${task_id}.exit" ]; then
+    return 1
   fi
-  return 1
+
+  # PID is dead → process crashed or was killed without writing exit file.
+  # This is a STALE task, not busy.
+  if ! kill -0 "$pid" 2>/dev/null; then
+    return 1
+  fi
+
+  # PID alive, no exit file → task is genuinely still running.
+  return 0
 }
 
 get_agent_session_id() {
@@ -347,34 +348,34 @@ cmd_status() {
   echo "--- Agents ---"
   for agent in fst-research fst-implementation fst-verification fst-debugging; do
     local wt="${AGENT_WORKTREE[$agent]}"
-    local session_id pid log_file busy_status
+    local session_id pid log_file agent_status exit_code task_id
     session_id="$(get_agent_session_id "$agent")"
     pid="$(get_agent_pid "$agent")"
     log_file="$(get_agent_log "$agent")"
+    agent_status="$(json_read "$AGENT_DIR/$agent.json" "status")"
+    exit_code="$(json_read "$AGENT_DIR/$agent.json" "exit_code")"
+    task_id="$(json_read "$AGENT_DIR/$agent.json" "task_id")"
 
-    if is_agent_busy "$agent"; then
-      busy_status="BUSY"
-    elif [ -n "$session_id" ]; then
-      local sess_status
-      SESSION_ID="$session_id" sess_status="$("$KILO_BIN" session list --format json 2>/dev/null \
-        | python3 -c "
-import json, os, sys
-try:
-    data = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-for s in data:
-    if s.get('id') == os.environ['SESSION_ID']:
-        print(s.get('status', {}).get('type', 'unknown'))
-        sys.exit(0)
-" 2>/dev/null)"
-      if [ "$sess_status" = "busy" ]; then
-        busy_status="BUSY"
+    # Determine accurate status:
+    # - Exit file exists → COMPLETED (or FAILED if non-zero exit code)
+    # - PID alive, no exit file → BUSY (task genuinely running)
+    # - PID dead, no exit file, has task → STALE (crashed without completion)
+    # - No PID, no task → IDLE
+    local display_status
+    if [ -n "$task_id" ] && [ -f "$LOG_DIR/${task_id}.exit" ]; then
+      if [ "$exit_code" = "0" ] || [ -z "$exit_code" ]; then
+        display_status="COMPLETED"
       else
-        busy_status="IDLE"
+        display_status="FAILED (exit=$exit_code)"
       fi
+    elif is_agent_busy "$agent"; then
+      display_status="BUSY"
+    elif [ -n "$pid" ] && [ -n "$task_id" ] && ! kill -0 "$pid" 2>/dev/null; then
+      display_status="STALE (pid dead, no exit file)"
+    elif [ -n "$session_id" ]; then
+      display_status="IDLE"
     else
-      busy_status="IDLE"
+      display_status="IDLE"
     fi
 
     echo "  $agent:"
@@ -382,7 +383,7 @@ for s in data:
     echo "    session_id: ${session_id:-(none)}"
     echo "    pid: ${pid:-(none)}"
     echo "    log: ${log_file:-(none)}"
-    echo "    status: $busy_status"
+    echo "    status: $display_status"
     echo ""
   done
 
@@ -542,7 +543,7 @@ print(' '.join(s.get('id','') for s in data if s.get('directory') == wt and s.ge
   done
 
   # Write agent state
-  echo "{\"session_id\":\"$session_id\",\"pid\":\"$pid\",\"log_file\":\"$log_file\",\"task\":\"$task\",\"status\":\"running\",\"started_at\":\"$started_at\"}" > "$AGENT_DIR/$agent.json"
+  echo "{\"session_id\":\"$session_id\",\"pid\":\"$pid\",\"log_file\":\"$log_file\",\"task\":\"$task\",\"task_id\":\"$task_id\",\"status\":\"running\",\"started_at\":\"$started_at\"}" > "$AGENT_DIR/$agent.json"
 
   # Write session state
   echo "{\"session_id\":\"$session_id\",\"agent\":\"$agent\",\"task\":\"$task\",\"task_id\":\"$task_id\",\"pid\":\"$pid\",\"log_file\":\"$log_file\",\"status\":\"running\",\"started_at\":\"$started_at\"}" > "$SESSION_DIR/${session_id:-$task_id}.json"
@@ -600,17 +601,34 @@ cmd_collect() {
   echo "  Agent: ${agent:-(unknown)}"
   echo "  Log: $log_file"
 
-  # Wait for the Kilo session to become idle (task done) or for the process
-  # to exit. kilo run --auto leaves the session alive (idle) after a task, so
-  # we key completion on session status, not process exit. The worker is
-  # setsid-detached, so it survives even if this collect call is interrupted.
+  # Wait for task completion. The authoritative completion signal is the
+  # exit file written by the bash wrapper after `kilo run` exits. We also
+  # treat PID death without an exit file as task failure.
   local exit_code=0
   local exit_file="$LOG_DIR/${task_id}.exit"
   local session_done=0
-  if [ -n "$session_id" ]; then
-    echo "  Waiting for session $session_id to complete..."
-    local waited=0
-    while [ "$waited" -lt "$MAX_WAIT_SECONDS" ]; do
+  local task_failed=0
+  local waited=0
+
+  while [ "$waited" -lt "$MAX_WAIT_SECONDS" ]; do
+    # Check for exit file first (task completed cleanly)
+    if [ -f "$exit_file" ]; then
+      exit_code="$(cat "$exit_file" 2>/dev/null | tr -d '[:space:]')"
+      [ -z "$exit_code" ] && exit_code=0
+      session_done=1
+      break
+    fi
+
+    # Check if PID died without exit file (task failed/crashed)
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      session_done=1
+      task_failed=1
+      exit_code=1
+      break
+    fi
+
+    # Also check kilo session status as a secondary signal
+    if [ -n "$session_id" ]; then
       local st
       st="$("$KILO_BIN" session list --format json 2>/dev/null \
         | python3 -c "
@@ -626,43 +644,29 @@ for s in data:
 sys.exit(0)
 " 2>/dev/null)"
       case "$st" in
-        idle|completed) session_done=1; break ;;
-        busy) ;;
-        *) session_done=1; break ;;
+        failed|error) session_done=1; task_failed=1; exit_code=1; break ;;
       esac
-      if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
-        session_done=1; break
-      fi
-      sleep "$SESSION_POLL_INTERVAL"
-      waited=$((waited + SESSION_POLL_INTERVAL))
-    done
-  elif [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-    echo "  Waiting for process (PID $pid) to complete..."
-    local waited=0
-    while [ "$waited" -lt "$MAX_WAIT_SECONDS" ]; do
-      if ! kill -0 "$pid" 2>/dev/null; then
-        session_done=1
-        break
-      fi
-      sleep "$SESSION_POLL_INTERVAL"
-      waited=$((waited + SESSION_POLL_INTERVAL))
-    done
-  fi
-  if [ -f "$exit_file" ]; then
-    exit_code="$(cat "$exit_file" 2>/dev/null | tr -d '[:space:]')"
-    [ -z "$exit_code" ] && exit_code=0
-  elif [ -s "$log_file" ]; then
-    exit_code=0
-  else
-    exit_code=1
-  fi
+    fi
+
+    sleep "$SESSION_POLL_INTERVAL"
+    waited=$((waited + SESSION_POLL_INTERVAL))
+  done
+
   if [ "$session_done" -eq 1 ]; then
-    echo "  Status: COMPLETED (exit code: $exit_code)"
+    if [ "$task_failed" -eq 1 ]; then
+      echo "  Status: FAILED (exit code: $exit_code)"
+    else
+      echo "  Status: COMPLETED (exit code: $exit_code)"
+    fi
   else
-    echo "  Status: STILL RUNNING (exit code: $exit_code)"
+    echo "  Status: STILL RUNNING (exit code: $exit_code, waited ${waited}s)"
   fi
 
-  echo "  Status: COMPLETED (exit code: $exit_code)"
+  local collect_status="completed"
+  if [ "$task_failed" -eq 1 ]; then
+    collect_status="failed"
+  fi
+  echo "  Status: ${collect_status^^} (exit code: $exit_code)"
   echo ""
 
   # If session_id was empty (buffered output), extract it now from the log
@@ -693,18 +697,19 @@ sys.exit(0)
   echo ""
 
   # Update state files
-  json_write "$SESSION_DIR/$session_id.json" "status" "completed"
+  json_write "$SESSION_DIR/$session_id.json" "status" "$collect_status"
   json_write "$SESSION_DIR/$session_id.json" "exit_code" "$exit_code"
   json_write "$SESSION_DIR/$session_id.json" "completed_at" "$(now_iso)"
   if [ -n "$shas" ]; then
     json_write "$SESSION_DIR/$session_id.json" "commit_sha" "$(echo "$shas" | head -1)"
   fi
 
-  json_write "$AGENT_DIR/$agent.json" "status" "completed"
+  local agent_status="$collect_status"
+  json_write "$AGENT_DIR/$agent.json" "status" "$agent_status"
   json_write "$AGENT_DIR/$agent.json" "exit_code" "$exit_code"
 
   if [ -n "$session_id_or_task" ] && [ -f "$TASK_DIR/$session_id_or_task.json" ]; then
-    json_write "$TASK_DIR/$session_id_or_task.json" "status" "completed"
+    json_write "$TASK_DIR/$session_id_or_task.json" "status" "$collect_status"
     json_write "$TASK_DIR/$session_id_or_task.json" "exit_code" "$exit_code"
     json_write "$TASK_DIR/$session_id_or_task.json" "completed_at" "$(now_iso)"
     if [ -n "$shas" ]; then
@@ -818,6 +823,83 @@ cmd_stop() {
 }
 
 ###############################################################################
+# cmd_cleanup — recover correct state from stale/crashed processes
+###############################################################################
+
+cmd_cleanup() {
+  init_state
+  local cleaned=0
+  for agent in fst-research fst-implementation fst-verification fst-debugging; do
+    local pid task_id session_id status exit_code
+    pid="$(json_read "$AGENT_DIR/$agent.json" "pid")"
+    task_id="$(json_read "$AGENT_DIR/$agent.json" "task_id")"
+    session_id="$(json_read "$AGENT_DIR/$agent.json" "session_id")"
+    status="$(json_read "$AGENT_DIR/$agent.json" "status")"
+
+    # No active task → nothing to clean
+    if [ -z "$pid" ] && [ -z "$task_id" ]; then
+      continue
+    fi
+
+    # Exit file exists but state not updated → reconcile
+    if [ -n "$task_id" ] && [ -f "$LOG_DIR/${task_id}.exit" ]; then
+      local ec
+      ec="$(cat "$LOG_DIR/${task_id}.exit" 2>/dev/null | tr -d '[:space:]')"
+      [ -z "$ec" ] && ec=0
+      if [ "$status" != "completed" ] && [ "$status" != "failed" ]; then
+        if [ "$ec" = "0" ]; then
+          json_write "$AGENT_DIR/$agent.json" "status" "completed"
+        else
+          json_write "$AGENT_DIR/$agent.json" "status" "failed"
+        fi
+        json_write "$AGENT_DIR/$agent.json" "exit_code" "$ec"
+        if [ -n "$session_id" ]; then
+          json_write "$SESSION_DIR/$session_id.json" "status" "$( [ "$ec" = "0" ] && echo completed || echo failed )"
+          json_write "$SESSION_DIR/$session_id.json" "exit_code" "$ec"
+        fi
+        if [ -n "$task_id" ] && [ -f "$TASK_DIR/$task_id.json" ]; then
+          json_write "$TASK_DIR/$task_id.json" "status" "$( [ "$ec" = "0" ] && echo completed || echo failed )"
+          json_write "$TASK_DIR/$task_id.json" "exit_code" "$ec"
+        fi
+        echo "  $agent: reconciled exit file (exit=$ec) → $( [ "$ec" = "0" ] && echo COMPLETED || echo FAILED )"
+        cleaned=1
+      fi
+      continue
+    fi
+
+    # PID dead, no exit file → stale/failed task
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then
+      if [ "$status" != "failed" ] && [ "$status" != "stale" ]; then
+        json_write "$AGENT_DIR/$agent.json" "status" "failed"
+        json_write "$AGENT_DIR/$agent.json" "exit_code" "1"
+        if [ -n "$session_id" ]; then
+          json_write "$SESSION_DIR/$session_id.json" "status" "failed"
+          json_write "$SESSION_DIR/$session_id.json" "exit_code" "1"
+        fi
+        if [ -n "$task_id" ] && [ -f "$TASK_DIR/$task_id.json" ]; then
+          json_write "$TASK_DIR/$task_id.json" "status" "failed"
+          json_write "$TASK_DIR/$task_id.json" "exit_code" "1"
+        fi
+        echo "  $agent: PID $pid dead, no exit file → FAILED (stale)"
+        cleaned=1
+      fi
+      continue
+    fi
+
+    # PID alive, no exit file → genuinely running, nothing to clean
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      echo "  $agent: PID $pid alive, no exit file → still running (no cleanup)"
+      continue
+    fi
+  done
+
+  if [ "$cleaned" -eq 0 ]; then
+    echo "  No stale state found."
+  fi
+  echo "=== cleanup complete ==="
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -832,6 +914,7 @@ main() {
     collect)  cmd_collect "$@" ;;
     sync)     cmd_sync "$@" ;;
     stop)     cmd_stop "$@" ;;
+    cleanup)  cmd_cleanup "$@" ;;
     doctor)   cmd_doctor "$@" ;;
     *)
       echo "fst-team — FST four-agent CLI orchestrator"
@@ -845,6 +928,7 @@ main() {
       echo "  collect <session_id|task_id>  Wait for completion and collect results"
       echo "  sync                          Synchronize branches and read ledgers from refs"
       echo "  stop <session_id>             Stop a running session"
+      echo "  cleanup                       Reconcile stale/crashed process state"
       echo "  doctor                        Health check: CLI, agents, worktrees, state"
       echo ""
       echo "Agents: fst-research, fst-implementation, fst-verification, fst-debugging"
@@ -854,4 +938,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi
