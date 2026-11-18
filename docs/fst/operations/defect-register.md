@@ -3,8 +3,8 @@
 **Status:** ESTABLISHED — initial defects from baseline diagnostics and implementation gaps.
 
 **Version:** 1.0
-**Date:** 2026-11-16
-**Git HEAD:** `c6a23ae` (main)
+**Date:** 2026-11-18
+**Git HEAD:** `bdb07fd` (team/debugging)
 **Classification:** Live document — updated when defects discovered, investigated, fixed, or verified.
 
 **Defect ID Format:** `FST-BUG-XXXX` (sequential, never reused).
@@ -19,19 +19,19 @@
 |-------|-------|
 | **Summary** | `SecureSession::~SecureSession()` at `src/network/secure_session.cpp:212` calls `ssl_stream_.next_layer().close(ec)` from the thread that drops the last `shared_ptr` reference. If that thread differs from the `boost::asio::io_context` thread running socket operations, Boost.Asio's `socket_ops::close` races with concurrent socket operations on the io_context thread. ThreadSanitizer reports 21 warnings at `/usr/include/boost/asio/detail/impl/socket_ops.ipp:324`. |
 | **Severity** | MEDIUM |
-| **Status** | OPEN |
+| **Status** | VERIFIED_FIXED |
 | **Affected Requirement IDs** | FST-REQ-0025 (TLS authenticated sessions), FST-REQ-0028 (NetworkRuntime integration) |
-| **Affected Modules/Files** | `src/network/secure_session.cpp:210-213` (`~SecureSession` calls `close()`), Boost.Asio 1.92.0 `socket_ops::close` |
+| **Affected Modules/Files** | `src/network/peer_admission.cpp` (`AdmissionController::stop()` closed sockets from caller thread), `src/network/secure_session.cpp:210-213` (`~SecureSession` direct close — latent, not exercised because `close()` always precedes destruction), Boost.Asio 1.92.0 `socket_ops::close` |
 | **Discovery Commit** | `a2d6cb6` (TSan test run) |
-| **Reproduction Steps** | 1. Build with `cmake --preset tsan`. 2. Run `./build/tsan/feinstatic_tests`. 3. Observe ThreadSanitizer: data race on `boost::asio::detail::socket_ops::close` at `socket_ops.ipp:324`. |
+| **Reproduction Steps** | 1. Build with `cmake --preset tsan`. 2. Run `./build/tsan/feinstatic_tests harness_`. 3. Observe ThreadSanitizer: data race on `boost::asio::detail::socket_ops::close` at `socket_ops.ipp:324`, with the write side at `AdmissionController::stop()` (`src/network/peer_admission.cpp`) closing `socket()` from the main/test thread while the io thread runs `async_receive`. |
 | **Expected Behaviour** | No data race: socket close must be synchronized with the io_context thread's socket operations. |
-| **Actual Behaviour** | `close()` is called from the session destructor thread, which may differ from the io_context thread. Boost.Asio's internal socket state is accessed concurrently without synchronization. |
-| **Root Cause** | Boost.Asio sockets are not thread-safe for concurrent access. FST destroys sessions (and closes their sockets) from arbitrary threads rather than from the io_context thread that owns the socket. |
-| **Fix Description** | Post socket close operations to the io_context's strand or thread instead of calling `close()` directly from the destructor. Alternatively, ensure all session destruction happens on the io_context thread by using `boost::asio::post(io_, [session](){ session->close(ec); })` or by tracking the owning io_context thread. |
-| **Regression Test** | `./build/tsan/feinstatic_tests` — zero `socket_ops::close` race reports |
-| **Fix Commit SHA** | — (pending) |
-| **Verification Result** | — (pending — 21 TSan warnings remain) |
-| **Remaining Risk** | Under debug/ASan/UBSan builds, no functional failures observed. Under TSan, race warnings indicate potential for undefined behavior in concurrent socket close scenarios. |
+| **Actual Behaviour** | `AdmissionController::stop()` called `socket().cancel()` + `socket().close()` directly from the caller thread while the io_context thread was concurrently running socket operations on the same socket. |
+| **Root Cause** | Boost.Asio sockets are not thread-safe for concurrent access. `AdmissionController::stop()` closed transport sockets from the caller thread while the io thread owned and actively used them. |
+| **Fix Description** | `AdmissionController::stop()` now stops and joins the io_context thread FIRST (no concurrent socket operations remain), then closes the acceptor and each session socket explicitly from this thread. Peers still observe EOF (socket actually closed), so shutdown does not hang. Fixes both `socket_ops::close` (FST-BUG-0014) and `reactive_socket_service_base` (FST-BUG-0015) races. |
+| **Regression Test** | `./build/tsan/feinstatic_tests harness_` — zero `socket_ops::close` / `reactive_socket_service_base` race reports (29/29 pass, confirmed across 2 runs); `./build/debug/feinstatic_tests` — 343/343 pass including `temp_handshake_live_test`. |
+| **Fix Commit SHA** | `bdb07fd` |
+| **Verification Result** | PASS — TSan: zero `socket_ops::close` race reports, harness 29/29 pass reliably. Debug: 343/343 pass. No segfault. |
+| **Remaining Risk** | `~SecureSession()` direct `close()` (secure_session.cpp:216) remains as a latent path, but `closed_` is set to true by `close()` before every teardown (stop(), `PeerSession::~PeerSession`), so the destructor skip-branch is always taken and the direct close is not reached in practice. Monitor if any code path drops a `SecureSession` without calling `close()`. |
 
 ### FST-BUG-0015: Boost.Asio reactive_socket_service_base::construct cross-thread race (TSan)
 
@@ -39,19 +39,19 @@
 |-------|-------|
 | **Summary** | Boost.Asio's `reactive_socket_service_base::construct` is called concurrently from multiple threads when socket objects are created or accessed across thread boundaries. ThreadSanitizer reports 17 warnings at `/usr/include/boost/asio/detail/impl/reactive_socket_service_base.ipp:52` and `:53`. |
 | **Severity** | MEDIUM |
-| **Status** | OPEN |
+| **Status** | VERIFIED_FIXED |
 | **Affected Requirement IDs** | FST-REQ-0025 (TLS authenticated sessions), FST-REQ-0028 (NetworkRuntime integration) |
-| **Affected Modules/Files** | `src/network/secure_session.cpp` (SecureSession construction), `src/network/network_runtime.cpp` (acceptor/session creation), Boost.Asio 1.92.0 `reactive_socket_service_base::construct` |
+| **Affected Modules/Files** | `src/network/peer_admission.cpp` (`AdmissionController::stop()` closed sockets from caller thread), Boost.Asio 1.92.0 `reactive_socket_service_base::construct` |
 | **Discovery Commit** | `a2d6cb6` (TSan test run) |
-| **Reproduction Steps** | 1. Build with `cmake --preset tsan`. 2. Run `./build/tsan/feinstatic_tests`. 3. Observe ThreadSanitizer: data race on `boost::asio::detail::reactive_socket_service_base::construct` at `reactive_socket_service_base.ipp:52` and `:53`. |
-| **Expected Behaviour** | No data race: socket service construction must be synchronized with the io_context thread. |
-| **Actual Behaviour** | Socket service internal state is accessed concurrently from multiple threads. |
-| **Root Cause** | Same as FST-BUG-0014: Boost.Asio socket objects are accessed from threads other than the io_context thread that owns them. |
-| **Fix Description** | Same as FST-BUG-0014: ensure all socket operations (including construction/destruction) happen on the io_context thread or are externally synchronized via a strand. |
-| **Regression Test** | `./build/tsan/feinstatic_tests` — zero `reactive_socket_service_base::construct` race reports |
-| **Fix Commit SHA** | — (pending) |
-| **Verification Result** | — (pending — 17 TSan warnings remain) |
-| **Remaining Risk** | Under debug/ASan/UBSan builds, no functional failures observed. Under TSan, race warnings indicate potential for undefined behavior in concurrent socket scenarios. |
+| **Reproduction Steps** | 1. Build with `cmake --preset tsan`. 2. Run `./build/tsan/feinstatic_tests harness_`. 3. Observe ThreadSanitizer: data race on `boost::asio::detail::reactive_socket_service_base::construct` at `reactive_socket_service_base.ipp:52` and `:53`, with the write side at `AdmissionController::stop()` closing `socket()` from the main/test thread while the io thread runs socket ops. |
+| **Expected Behaviour** | No data race: socket service construction/state must be synchronized with the io_context thread. |
+| **Actual Behaviour** | `AdmissionController::stop()` called `socket().cancel()` + `socket().close()` directly from the caller thread while the io_context thread was concurrently running socket operations on the same socket. |
+| **Root Cause** | Same as FST-BUG-0014: Boost.Asio socket objects are accessed from threads other than the io_context thread that owns them. `AdmissionController::stop()` closed sockets from the caller thread while the io thread owned and actively used them. |
+| **Fix Description** | Same as FST-BUG-0014: `AdmissionController::stop()` now stops and joins the io_context thread first, then closes sockets explicitly from this thread once no concurrent socket operations remain. |
+| **Regression Test** | `./build/tsan/feinstatic_tests harness_` — zero `reactive_socket_service_base::construct` race reports (29/29 pass, confirmed across 2 runs); `./build/debug/feinstatic_tests` — 343/343 pass. |
+| **Fix Commit SHA** | `bdb07fd` |
+| **Verification Result** | PASS — TSan: zero `reactive_socket_service_base` race reports, harness 29/29 pass reliably. Debug: 343/343 pass. |
+| **Remaining Risk** | None identified; TSan reports zero race warnings after the fix. |
 
 ## Defect Entries
 
@@ -61,19 +61,19 @@
 |-------|-------|
 | **Summary** | `SecureSession::handshake_result_` (a `SecureHandshakeResult` containing `NodeId peer_node_id` with a `std::string value_`) is written by `do_verify_handshake` at `src/network/secure_session.cpp:518` (`handshake_result_ = result;`, i.e. `NodeId::operator=` copying the string heap buffer) on one thread, while another thread destroys `SecureSession` (→ `~SecureHandshakeResult` → `~NodeId`, reading the same string heap buffer to free it) at `src/network/secure_session.cpp:210-213`. ThreadSanitizer reports a data race at `include/feinstat/network/identity.hpp:23` (`NodeId::~NodeId` and `NodeId::operator=`). |
 | **Severity** | HIGH |
-| **Status** | INVESTIGATING |
+| **Status** | VERIFIED_FIXED |
 | **Affected Requirement IDs** | FST-REQ-0025 (TLS authenticated sessions), FST-REQ-0028 (NetworkRuntime integration) |
 | **Affected Modules/Files** | `include/feinstat/network/secure_session.hpp:161` (`handshake_result_` member), `src/network/secure_session.cpp:517-519` (`do_verify_handshake` write), `src/network/secure_session.cpp:210-213` (`~SecureSession` destroy), `include/feinstat/network/identity.hpp:23` (`NodeId` with `std::string value_`), `tests/temp_handshake_test.cpp` (triggering test) |
 | **Discovery Commit** | `a2d6cb6` (TSan test run) |
 | **Reproduction Steps** | 1. Build with `cmake --preset tsan`. 2. Run `./build/tsan/feinstatic_tests temp_handshake_live_test`. 3. Observe ThreadSanitizer: data race on `NodeId::~NodeId()` / `NodeId::operator=` at `identity.hpp:23`. 4. Also observe `temp_handshake_live_test` fails: `server_ec` set (operation_aborted) because both threads share one `io_context` and client's `io.stop()` aborts the server's pending `async_accept`. |
 | **Expected Behaviour** | No data race: `handshake_result_` must not be written concurrently with its destruction. `server_ec` must be success when both server and client complete their handshakes. |
-| **Actual Behaviour** | 87 TSan warnings (all deduplicate to 1 unique race condition on `NodeId`). Test fails with `server_ec` = `operation_aborted`. |
-| **Root Cause** | `temp_handshake_live_test` shares a single `boost::asio::io_context` between server and client threads. The client's handshake callback calls `io.stop()` (line 100), which causes `io.run()` to return on BOTH threads. The server thread then destroys its `session` shared_ptr (line 87), running `~SecureSession` → `~handshake_result_` → `~NodeId`, while the main thread is still executing `do_verify_handshake` line 518 writing `handshake_result_ = result` (i.e. `NodeId::operator=`). The `handshake_result_` member has no synchronization and is accessed across threads without happens-before. |
-| **Fix Description** | Restructure `temp_handshake_live_test` to use two independent `boost::asio::io_context` objects (one for server, one for client), eliminating the shared `io.stop()` cross-thread race. Each thread's `io.run()` returns only after its own handshake completes and calls its own `io.stop()`. The `session` shared_ptr is destroyed only after its io_context has fully drained all handshake callbacks, establishing happens-before between `handshake_result_` write and destruction. |
-| **Regression Test** | `temp_handshake_live_test` must pass under TSan with 0 warnings, and `server_ec`/`client_ec` must both be success. |
-| **Fix Commit SHA** | — (pending) |
-| **Verification Result** | — (pending — TSan run shows 87 warnings, test failing) |
-| **Remaining Risk** | `SecureSession::handshake_result_` is written by async callbacks and destroyed with the session. With proper `shared_ptr` lifetime (capturing `this` in handlers), the session stays alive while handlers are pending. The race only manifests due to the test's shared `io_context` + `io.stop()` design. Verify no other test or production code destroys a `SecureSession` while a handshake callback may still execute. |
+| **Actual Behaviour** | Fixed: `temp_handshake_live_test` now uses two independent `boost::asio::io_context` objects (one for server, one for client). `server_ec` and `client_ec` are both `Success`. No `NodeId` race reported under TSan. |
+| **Root Cause** | `temp_handshake_live_test` shared a single `boost::asio::io_context` between server and client threads. The client's handshake callback called `io.stop()`, causing `io.run()` to return on BOTH threads, so the server's `session` was destroyed while the main thread was still writing `handshake_result_`. |
+| **Fix Description** | `temp_handshake_live_test` restructured (in tree prior to this session) to use two independent `boost::asio::io_context` objects (one for server, one for client), eliminating the shared `io.stop()` cross-thread race. Each thread's `io.run()` returns only after its own handshake completes and calls its own `io.stop()`. The `session` shared_ptr is destroyed only after its io_context has fully drained all handshake callbacks, establishing happens-before between `handshake_result_` write and destruction. |
+| **Regression Test** | `temp_handshake_live_test` passes under Debug and under TSan with 0 warnings; `server_ec`/`client_ec` both `Success`. (`./build/tsan/feinstatic_tests temp_handshake_live_test` — 1 pass, 0 TSan warnings.) |
+| **Fix Commit SHA** | `bdb07fd` (verification commit; test restructure predates this session) |
+| **Verification Result** | PASS — `temp_handshake_live_test` passes under Debug (343/343 suite) and under TSan (1 pass, 0 `NodeId` race warnings). |
+| **Remaining Risk** | `SecureSession::handshake_result_` is written by async callbacks and destroyed with the session. With proper `shared_ptr` lifetime (capturing `this` in handlers), the session stays alive while handlers are pending. Verify no other test or production code destroys a `SecureSession` while a handshake callback may still execute. |
 
 ### FST-BUG-0001: NetworkRuntime::initialize always returns success error_code
 
@@ -399,10 +399,10 @@ hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
 | Severity | OPEN | INVESTIGATING | FIX_IN_PROGRESS | FIXED_PENDING_VERIFICATION | VERIFIED_FIXED | OWNER_ACCEPTED_RISK | DUPLICATE | Total |
 |----------|------|---------------|-----------------|----------------------------|----------------|---------------------|-----------|-------|
 | CRITICAL | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 2 |
-| HIGH | 1 | 1 | 0 | 5 | 0 | 0 | 0 | 7 |
-| MEDIUM | 3 | 0 | 0 | 4 | 0 | 0 | 0 | 7 |
+| HIGH | 0 | 0 | 0 | 5 | 1 | 0 | 0 | 6 |
+| MEDIUM | 2 | 0 | 0 | 4 | 2 | 0 | 0 | 8 |
 | LOW | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
-| **Total** | **4** | **1** | **0** | **11** | **1** | **0** | **0** | **17** |
+| **Total** | **2** | **0** | **0** | **11** | **4** | **0** | **0** | **17** |
 
 ---
 
