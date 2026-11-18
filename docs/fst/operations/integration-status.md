@@ -120,7 +120,7 @@ Recorded at the permanent five-agent migration. `main` is untouched by this migr
 | `team/integration` | `a40f71451ad8502c18808742664df57733455ed4` | `/home/monil/Desktop/CXX/FeinStatic-agents/integration` | `fst-integration` | Five-agent migration baseline commit (charter, roadmap, research ledger, research-proposals, fst-research agent def, five-agent controller, integration ledger updates). |
 | `team/research` | `f18d8e0dc087f051238569d41c176e9f78980c81` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | `fst-research` | Research pilot: CometBFT consensus candidate report + research-status ledger update (read-only) |
 | `team/implementation` | `f5213c1881ecba12f6737e820a6aa0646c251fc2` | `/home/monil/Desktop/CXX/FeinStatic-agents/implementation` | `fst-implementation` | implementation-status.md charter + five-agent role obligations |
-| `team/verification` | `716406b4c62856d27aaf84141f41cef74dd5d91a` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | `fst-verification` | verification-status.md charter + five-agent role obligations |
+| `team/verification` | `ae1cd70e9484c2204e10ab02b3c5f8c26ff4e6b1` | `/home/monil/Desktop/CXX/FeinStatic-agents/verification` | `fst-verification` | verification-status.md charter + five-agent role obligations |
 | `team/debugging` | `72c5a55a3e154c38978ee0287dc17e97269b0977` | `/home/monil/Desktop/CXX/FeinStatic-agents/debugging` | `fst-debugging` | defect-register.md charter + five-agent role obligations |
 | `main` | `b69857a36daa04578be61ca3f7d2d7bf39bfa99c` | `/home/monil/Desktop/CXX/FeinStatic` | (none) | Untouched by this migration |
 
