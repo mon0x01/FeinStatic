@@ -54,7 +54,7 @@ No significant technology or architecture selection is made without research (D-
 - Supply-chain risks
 - Long-term upgrade, compatibility and replacement costs
 
-Evaluation records publication dates, release versions, access dates and source links. No research result automatically becomes an approved protocol decision. Research is a mandatory gate for significant technology or architecture selections.
+Evaluation records publication dates, release versions, access dates and source links. No research result automatically becomes an approved protocol decision. Research is a mandatory gate for significant technology or architecture selections. The full acceptance criteria are in `docs/fst/policies/technology-and-dependency-acceptance.md` (license policy, transitive-dependency compliance, supply-chain controls, root-project license research BLOCKED-ON-OWNER).
 
 ## 8. Cryptographic and security engineering
 
@@ -99,6 +99,10 @@ Production readiness requires external security audits, reproducible builds, ver
 ## 18. Release engineering and long-term sustainability
 
 Releases are small, tested and documented (D-013), issued after approximately two or three new features. Long-term sustainability beyond the founding development team is a design goal (P10). Release engineering includes build, test, sign and publish automation governed by the Integration Agent.
+
+## 19. Technology and dependency acceptance policy
+
+FST adopts technology only after four independent assessments pass: legal/licensing compatibility, security/provenance/intellectual-property assessment, engineering suitability/operational maturity, and compatibility with FST's approved architecture, decentralization and future phases. A preferred permissive-license policy applies (Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, Zlib, BSL-1.0); reciprocal and GPL-family licenses require documented compatibility assessment and explicit owner approval; proprietary, non-commercial, no-derivatives, field-of-use, SSPL, Commons Clause, and unclear/custom licenses are rejected by default. Transitive dependencies must be fully inventoried (SPDX SBOM), and no dependency whose transitive license obligations cannot be established may be introduced. Cryptographic primitives must not be reinvented; widely reviewed, standards-based, actively maintained implementations are preferred. The full policy is in `docs/fst/policies/technology-and-dependency-acceptance.md`. Root-project license selection remains BLOCKED-ON-OWNER; no agent may silently choose FST's root license.
 
 ---
 

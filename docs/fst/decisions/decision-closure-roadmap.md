@@ -43,12 +43,14 @@ This roadmap classifies each outstanding matter and assigns a decision owner, de
 | M-16 | Project governance, maintainership and succession | BLOCKED-ON-OWNER | Owner | Governance research; succession plan | Governance model documented; maintainers and succession named | Phase 5+ |
 | M-17 | Supply-chain security and release signing | ENGINEERING-DEFINED | fst-integration | Build/release tooling; key management | Release signing and supply-chain process implemented and tested | Phase 4 |
 | M-18 | Production security audits and mainnet readiness | BLOCKED-ON-OWNER | Owner | All M-01..M-17 closed or deferred; audit schedule | Independent security audits passed; mainnet-readiness criteria documented and met | Mainnet (post-Phase 5) |
+| M-19 | FST root-project license selection (Apache-2.0, GPL-3.0, MPL-2.0, others) | BLOCKED-ON-OWNER | Owner | License comparison research (RT-LICENSE-001); contributor licensing requirements | Owner explicitly selects root-project license; LICENSE file added only with owner authorization | Phase 2–4 (pre-mainnet) |
+| M-20 | Dependency policy automation (license scanning, SPDX SBOM, allowlist/denylist, provenance, vulnerability scanning) | DEFERRED-BY-DESIGN | fst-integration (+ fst-research research) | Policy documented (`docs/fst/policies/technology-and-dependency-acceptance.md`); CI controls researched | CI gates enforce policy; exceptions not hidden through scanner configuration | Phase 4+ |
 
 ---
 
 ## Phase gating
 
-- **Phases 0–2:** COMPLETE. Foundation, specification, foundational research, core networking foundation.
+- **Phases 0–2:** COMPLETE. Foundation, specification, foundational research, core networking foundation. Root-project license selection (M-19) is BLOCKED-ON-OWNER and must be resolved before public contribution policy is finalized.
 - **Phase 3:** Consensus & validator architecture, transaction & state layer, UTXO ledger, mempool, network identity (M-09, M-12, M-13, M-10 partially). D-017 CometBFT feasibility (M-03) must reach prototype + determinism evidence before CometBFT becomes a production dependency.
 - **Phase 4:** Monetary parameters (M-01), validator economics (M-02), genesis (M-11), cryptographic primitives (M-10), supply-chain/release signing (M-17), testnet deployment.
 - **Phase 5–10:** Offline operation (M-04), additional transports (M-05), privacy (M-06), migration/fork conversion (M-07), independent client count (M-08), state sync/light clients (M-14), governance/succession (M-16), mainnet readiness (M-18).
@@ -72,7 +74,8 @@ Research documents that describe an APPROVED decision as still undecided are pre
 - The Implementation Agent (fst-implementation) makes ENGINEERING-DEFINED decisions (M-09, M-12, M-13) within approved bounds and after research gate.
 - The Integration Agent (fst-integration) owns M-15, M-17 process and cross-role coordination.
 - The Verification Agent (fst-verification) independently gates all implementation work; it does not approve its own work.
-- BLOCKED-ON-OWNER matters (M-01, M-02, M-11, M-16, M-18) require explicit owner decision; no agent proceeds on implementation that depends on them without owner sign-off.
+- BLOCKED-ON-OWNER matters (M-01, M-02, M-11, M-16, M-18, M-19) require explicit owner decision; no agent proceeds on implementation that depends on them without owner sign-off.
+- M-20 (dependency policy automation) is DEFERRED-BY-DESIGN pending policy documentation and owner sign-off; CI controls are not implemented until the policy is accepted.
 
 ---
 
