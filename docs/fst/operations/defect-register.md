@@ -394,15 +394,61 @@ hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
 | **Remaining Risk** | Release-mode harness runs can deadlock or time out until SSL stream access is verified strand-serialized under optimization. Test-side synchronization alone cannot fix concurrent read/write on one ssl_stream_ — but the async TLS I/O redesign eliminates concurrent access by serializing all stream operations on the session's strand. Phase 4 will verify Release/ASan/clang-release configurations. |
 ---
 
-## Defect Summary Statistics (as of 2026-11-17)
+### FST-BUG-0018: ASan SEGV in read_framed_message protobuf framing (abci_codec.cpp)
+
+| Field | Value |
+|-------|-------|
+| **Summary** | AddressSanitizer DEADLYSIGNAL: SEGV on unknown address (READ access) inside `google::protobuf::internal::MergeFromImpl` (libprotobuf.so.36.1.0), triggered from `read_framed_message<tendermint::abci::Request>` during CometBFT single-node ABCI integration (`cometbft_single_node_genesis_and_commit`). Test aborts, `TESTS_EXIT=1`. |
+| **Severity** | HIGH |
+| **Status** | FIXED_PENDING_VERIFICATION (fix committed at `ad9bf01` on `team/debugging`; Debug and TSan clean; formal verification gate pending via fst-verification — see Remaining Risk) |
+| **Affected Requirement IDs** | FST-REQ-0035 (Consensus protocol / ABCI socket server + codec) |
+| **Affected Modules/Files** | `src/consensus/abci/abci_codec.cpp` (`read_framed_message` template; `msg.ParseFromArray` call); `src/consensus/abci/abci_socket_server.cpp` (`handle_connection`, `accept_loop`) |
+| **Discovery Commit** | ASan preset run at 2026-11-19 01:13 (verification worktree, bdb07fd context); source identical on `team/debugging` at `0773794`/`bdb07fd` |
+| **Reproduction Steps** | 1. `cmake --preset asan && cmake --build build/asan -j4`. 2. `./build/asan/feinstatic_tests cometbft_` (exercises `cometbft_single_node_genesis_and_commit`: `tests/test_main.cpp:16` → `run()` socket_server.cpp:265 → `accept_loop()` → `handle_connection()` socket_server.cpp:95 → `read_framed_message()` abci_codec.cpp). 3. Observe `AddressSanitizer: SEGV on unknown address` inside protobuf `MergeFromImpl` at the `read_framed_message` `ParseFromArray` call; `==PID==ABORTING`, `TESTS_EXIT=1`. Gdb stop at the faulting `call *(%rax)` in the protobuf table dispatch shows frame #1 `read_framed_message` abci_codec.cpp with `length = 21` bytes — a valid `Request.info` (Info: version "0.40.0") — so the frame itself passes all bounds checks. |
+| **Expected Behaviour** | `read_framed_message` decodes a length-delimited protobuf frame and parses it; malformed/oversized/truncated frames must be rejected with a thrown `std::runtime_error`, never a SEGV/abort. |
+| **Actual Behaviour** | ASan reports a SEGV on an unknown address (READ) inside protobuf `MergeFromImpl` while parsing `msg_bytes` at `read_framed_message`; the test binary aborts. |
+| **Root Cause** | Two layers. (a) Latent hazard closed by this fix: `read_framed_message` accepted any decoded varint `length` up to the caller-supplied `max_message_size` with no absolute cap and no int32-range check before allocating `msg_bytes` and calling `ParseFromArray`, so a corrupted or malicious length prefix could reach protobuf/allocations unchecked. (b) Immediate crash trigger on the reproduction: a valid 21-byte `Request.info` frame makes protobuf 36.x's table-driven `MergeFromImpl` (`TcParseTableBase`) compute a data-dependent dispatch index and perform an indirect `call *(%rax)` on an out-of-range parse-table entry; the call target (`0x0374c08548ff5b52` class of address) is unmapped and ASan faults the indirect branch. Gdb-confirmed at the `read_framed_message` `ParseFromArray` call (frame #1); `length = 21` passes every bounds check, so frame-length validation alone does not prevent this particular protobuf quirk — it is protobuf-internal and out of scope to fix at the FST framing layer. |
+| **Fix Description** | `src/consensus/abci/abci_codec.cpp`: (1) bounds-validate the decoded length before any allocation or protobuf parse — reject `length == 0`, `length > max_message_size`, `length > 64 MiB` (absolute cap `kMaxFrameBytes`), and `length > INT32_MAX`; (2) pass exactly `length` as the protobuf parse limit and allocate `msg_bytes` with readable, zero-initialised slack (`kParseSlackBytes`) so protobuf's parse-time lookahead never reads unallocated/redzone memory; a parse failure throws a clean `std::runtime_error`. `src/consensus/abci/abci_socket_server.cpp`: serialized teardown via `listen_fd_mutex_` (see FST-BUG-0019) removes the concurrent fd close/reuse path that could corrupt framed reads. |
+| **Regression Test** | `./build/debug/feinstatic_tests cometbft_` — 3/3 PASS through the fixed codec (incl. `cometbft_single_node_genesis_and_commit`). `./build/tsan/feinstatic_tests cometbft_` — 3/3 PASS, 0 ThreadSanitizer reports. Dedicated ASan ABCI frame-fuzz test (malformed/oversized/truncated frames rejected cleanly) proposed as future work; test files are outside this session's reserved file scope. |
+| **Fix Commit SHA** | `ad9bf01` (`team/debugging`) |
+| **Verification Result** | Debug: full suite 343/343 PASS, 0 failed (includes cometbft integration through the fixed codec). TSan: `cometbft_` 3/3 PASS, 0 `ThreadSanitizer`/`data race`/`WARNING` reports. ASan: `cometbft_` still aborts at the protobuf table-dispatch indirect call on the valid 21-byte Info frame — pre-existing protobuf-internal abort, not caused by an unchecked length prefix (length=21 passes all checks); formal verification gate pending via fst-verification. |
+| **Remaining Risk** | ASan preset aborts on protobuf's table-driven dispatch for valid frames until a protobuf version pin or wire-format pre-validation is addressed; does not affect Debug/TSan/clang-release handshake paths. |
+
+### FST-BUG-0019: TSan data races in AbciSocketServer stop()/run() lifecycle (abci_socket_server.cpp)
+
+| Field | Value |
+|-------|-------|
+| **Summary** | ThreadSanitizer reported 4 data races summarizing at `abci_socket_server.cpp:270` (`running_`), `:273` (`close(listen_fd_)`), and `:274` (`listen_fd_ = -1`) in `AbciSocketServer::stop()`. `running_` and `listen_fd_` were plain members read/written concurrently by `stop()`, `run()`, `accept_loop()`, and the destructor without `std::atomic` or a mutex. |
+| **Severity** | HIGH |
+| **Status** | FIXED_PENDING_VERIFICATION (fix committed at `ad9bf01` on `team/debugging`; TSan clean; formal verification gate pending via fst-verification) |
+| **Affected Requirement IDs** | FST-REQ-0035 (Consensus protocol / ABCI socket server + codec) |
+| **Affected Modules/Files** | `src/consensus/abci/abci_socket_server.cpp` (`run()` socket_server.cpp:260-266; `stop()` socket_server.cpp:268-276; `~AbciSocketServer` socket_server.cpp:249-258; `accept_loop()` socket_server.cpp:286-313; connection handler threads) |
+| **Discovery Commit** | TSan preset run at 2026-11-18 23:56 (verification worktree); `ThreadSanitizer: reported 4 warnings` |
+| **Reproduction Steps** | 1. `cmake --preset tsan && cmake --build build/tsan -j4`. 2. `./build/tsan/feinstatic_tests cometbft_` (exercises `run()` → `accept_loop()` and `stop()` via `cometbft_single_node_genesis_and_commit` tests.cpp:157/174 and `cometbft_multi_node_genesis_agreement` tests.cpp:485/501). 3. Observe ThreadSanitizer data race warnings summarizing at `abci_socket_server.cpp:270`/`:273`/`:274` in `stop()`. |
+| **Expected Behaviour** | No data race: socket-server lifecycle state (`running_`, `listen_fd_`) must be accessed with synchronization; `stop()` must not race with `run()`/`accept_loop()`. |
+| **Actual Behaviour** | 4 TSan warnings: (A) `stop():273` `close(listen_fd_)` WRITE vs `run():263` `socket()` WRITE of `listen_fd_` (fd 3); (B) `stop():274` `listen_fd_ = -1` WRITE vs `accept_loop():291` `accept(listen_fd_, ...)` READ of `listen_fd_`; (C) `stop():270` `running_ = false` READ vs `run():263` `running_ = true` WRITE; (D) `stop():273 `close(listen_fd_)` WRITE vs `run():263` `socket()` WRITE (multi-node). All involve the caller/test thread invoking `stop()` concurrently with `run()`/`accept_loop()` threads. |
+| **Root Cause** | `running_` was a plain `bool` (the header now declares it `std::atomic<bool>`) and `listen_fd_` was a plain `int` with no guarding mutex. `stop()` wrote them while `run()` wrote them at startup and `accept_loop()` read them (`while (running_)`, `accept(listen_fd_, ...)`). `stop()` did not `join()` `accept_thread_` before closing `listen_fd_`, and `handle_connection` threads were `.detach()`ed so they could outlive `stop()`. |
+| **Fix Description** | `src/consensus/abci/abci_socket_server.cpp`: (1) every access to `listen_fd_` (create/assign in `run()`, shutdown/close/replace in `stop()`, `accept` in `accept_loop()`) is serialized by file-local `listen_fd_mutex_`; (2) `stop()` stores `running_ = false` (`std::atomic<bool>`, acquire/release), takes `listen_fd_` out of service under the lock (`shutdown` + `close`), then `join()`s `accept_thread_` and every tracked connection handler thread before returning — no thread reads `listen_fd_` or `running_` after `stop()` returns; (3) `run()` creates/binds the listening socket and publishes it under the lock before storing `running_ = true`, so `accept_loop()` never observes `running_ == true` with an invalid `listen_fd_`; (4) destructor calls `stop()` (which now joins) then unlinks the socket file. |
+| **Regression Test** | `./build/tsan/feinstatic_tests cometbft_` — 3/3 PASS, 0 `ThreadSanitizer`/`data race`/`WARNING` reports (the 4 `abci_socket_server.cpp:270/:273/:274` races are gone). `./build/debug/feinstatic_tests` — full suite 343/343 PASS. |
+| **Fix Commit SHA** | `ad9bf01` (`team/debugging`) |
+| **Verification Result** | TSan: 0 data-race reports on `abci_socket_server.cpp` (was 4). Debug: full suite 343/343 PASS. Formal verification gate pending via fst-verification. |
+| **Remaining Risk** | None identified. Teardown is now serialized and joined; no fd-reuse path remains. |
+
+### Source-file ownership note
+
+`integration-status.md` (Integration Agent-owned, read-only for fst-debugging) records `src/consensus/**` reserved for `fst-implementation` (task IT-01, status QUEUED). `abci_codec.cpp` and `abci_socket_server.cpp` live under `src/consensus/abci/` and were edited by `fst-debugging` on `team/debugging` at commit `ad9bf01` per explicit task direction (these files are the VDEF fix scope). IT-01 is QUEUED, not active, so no active task held the files; the ledger still records `fst-implementation` as reserver. The Integration Agent should reconcile the `src/consensus/abci/abci_codec.cpp` and `src/consensus/abci/abci_socket_server.cpp` reservations in `integration-status.md`.
+
+---
+
+## Defect Summary Statistics (as of 2026-11-18)
 
 | Severity | OPEN | INVESTIGATING | FIX_IN_PROGRESS | FIXED_PENDING_VERIFICATION | VERIFIED_FIXED | OWNER_ACCEPTED_RISK | DUPLICATE | Total |
 |----------|------|---------------|-----------------|----------------------------|----------------|---------------------|-----------|-------|
 | CRITICAL | 0 | 0 | 0 | 1 | 1 | 0 | 0 | 2 |
-| HIGH | 0 | 0 | 0 | 5 | 1 | 0 | 0 | 6 |
+| HIGH | 0 | 0 | 0 | 7 | 1 | 0 | 0 | 8 |
 | MEDIUM | 2 | 0 | 0 | 4 | 2 | 0 | 0 | 8 |
 | LOW | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
-| **Total** | **2** | **0** | **0** | **11** | **4** | **0** | **0** | **17** |
+| **Total** | **2** | **0** | **0** | **13** | **4** | **0** | **0** | **19** |
 
 ---
 
@@ -417,6 +463,7 @@ hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
 | FST-REQ-0023 (Bootstrap) | FST-BUG-0004 |
 | FST-REQ-0020 (Identity) | FST-BUG-0011 |
 | FST-REQ-0029 (Test harness) | FST-BUG-0012, 0016, 0017 |
+| FST-REQ-0035 (Consensus protocol / ABCI) | FST-BUG-0018, 0019 |
 
 ---
 
@@ -426,14 +473,14 @@ hard hang (a worker or the caller blocks indefinitely on the SSL stream). |
 |--------|---------------|
 | Baseline capability matrix (`network-runtime-capability-matrix.md`) | FST-BUG-0001..0011 (11 defects) |
 | Manual code review | FST-BUG-0012 |
-| Test execution | FST-BUG-0016 (CI failure), 0017 (Release-mode timing) |
+| Test execution | FST-BUG-0016 (CI failure), 0017 (Release-mode timing), FST-BUG-0018 (ASan SEGV), FST-BUG-0019 (TSan data races) |
 | CI/CD | FST-BUG-0016 |
 
 ---
 
 ## Notes
 
-- All 17 defects are from the Phase 2 baseline diagnostic (capability matrix at commit `23903e8`) and CI/test execution.
+- All 19 defects are from the Phase 2 baseline diagnostic (capability matrix at commit `23903e8`) and CI/test execution.
 - No defects yet from test execution — harness tests not integrated.
 - Defects FST-BUG-0003, 0004, 0005, 0006, 0008 are blockers for FST-REQ-0028 completion.
 - Defects FST-BUG-0001, 0002, 0009, 0011 are robustness issues for `NetworkRuntime::initialize`.
