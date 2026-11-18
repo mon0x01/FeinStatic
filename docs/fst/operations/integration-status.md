@@ -46,14 +46,19 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 | team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T19:31:45Z |
 | team/implementation | c573ef99dc2351972d447842d1bfcc93668caefa | fst-implementation | team/integration | RECEIVED | 2026-11-18T19:52:00Z |
 | team/verification | 2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e | fst-verification | team/integration | RECEIVED | 2026-11-18T19:55:00Z |
+| team/implementation | f360985e98dd882556cc9e6b531ed2b4099ac727 | fst-implementation | team/integration | RECEIVED | 2026-11-18T20:xx:00Z |
 
 ## Integration and review status
 - Last integrated commit: `a89ccd8` (merge commit merging `bdb07fd` fst-debugging FST-BUG-0014/0015 fix into `team/integration`; HEAD advances from `4c5e088` → `a89ccd8`)
 - Last review: `bdb07fd` — Verification Agent gate PASSED; integrated via merge commit `a89ccd8`
-- Pending review: none
-- Pending handoffs (documentation-only ledger reconciliations, no source to merge into team/integration):
+- Pending review: `f360985e98dd882556cc9e6b531ed2b4099ac727` (fst-implementation, FST-REQ-0036 FinalityChecker implementation) — awaiting Verification Agent gate
+- Pending handoffs (documentation-only ledger reconciliations, no source to merge into team/integration — acknowledged, no merge required):
   - `c573ef99dc2351972d447842d1bfcc93668caefa` (fst-implementation, team/implementation) — FST-REQ-0036..0044 audit + implementation-status.md reconciliation. RECEIVED; no build gate required (docs-only); no source to integrate.
-  - `2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e` (fst-verification, detached at 0773794) — verification gate evidence for commit `077379458ed1847d704af89a7a5ae5520cfee42d`. RECEIVED; gate PASSED (see evidence below); no source to integrate.
+  - `2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e` (fst-verification, detached at 0773794) — verification gate evidence for commit `077379458ed1847d704af89a7a5ae5520cfee42d`. RECEIVED; gate PASSED; no source to integrate.
+- Pending debugging work (uncommitted in `team/debugging` working tree):
+  - `src/consensus/abci/abci_socket_server.cpp` — VDEF-2026-11-18-002 (TSan stop()/run() races) FIXED, verified zero TSan warnings under TSan preset; not yet committed
+  - `src/consensus/abci/abci_codec.cpp` — VDEF-2026-11-18-001 (ASan SEGV at MergeFromImpl) — fix attempt made, SEGV persists; further investigation needed
+  - `docs/fst/operations/defect-register.md` — VDEF-001/VDEF-002 defect entries added; not yet committed
 
 ## Verification Gate Evidence — Commit bdb07fd
 
