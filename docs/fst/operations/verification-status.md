@@ -4,7 +4,7 @@
 
 **Version:** 1.0
 **Date:** 2026-11-17
-**Git HEAD:** `c6a23ae` (main)
+**Git HEAD:** `87919e8cfea3881c6f00280c2e7c54588c7f2cb0` (main, up to date with origin/main)
 **Classification:** Live document — updated at every durable checkpoint where tests run.
 
 ---
@@ -122,10 +122,11 @@ requirements are explicit for each maintenance task.
 
 | Config | Preset | Command | Status | Notes |
 |--------|--------|---------|--------|-------|
-| Debug | `debug` | `cmake --preset debug && cmake --build build/debug -j2` | PASS | All 343 tests pass |
-| Release | `release` | `cmake --preset release && cmake --build build/release -j2` | PASS | Builds successfully |
-| AddressSanitizer + UBSan | `asan` | `cmake --preset asan && cmake --build build/asan -j2` | PASS | Build succeeds; all 343 tests pass under ASan/UBSan including 29 multi-node harness tests across repeated runs with no sanitizer errors |
-| Clang Release (-Werror) | `clang-release` | `cmake --preset clang-release && cmake --build build/clang-release -j2` | PASS | Builds warning-free under -Werror; all 343 tests pass |
+| Debug | `debug` | `cmake --preset debug && cmake --build build/debug -j2` | PARTIAL | Builds successfully; 343/343 tests pass on clean run; intermittent `harness_connection_count_returns_after_disconnect` failure on repeated runs (timing-dependent, FST-BUG-0017) |
+| Release | `release` | `cmake --preset release && cmake --build build/release -j2` | PARTIAL | Builds successfully; `harness_peer_record_request_response_discovery` FAILS reliably (timing-dependent, FST-BUG-0017); test binary does not exit cleanly after CometBFT integration tests (hangs, timeout exit code 124) |
+| AddressSanitizer + UBSan | `asan` | `cmake --preset asan && cmake --build build/asan -j2` | PARTIAL | Build succeeds; non-CometBFT tests pass under ASan/UBSan; CometBFT integration test path aborts with ASan error (ABORTING) |
+| Clang Release (-Werror) | `clang-release` | `cmake --preset clang-release && cmake --build build/clang-release -j2` | PARTIAL | Builds warning-free under -Werror; all tests pass but binary does not exit cleanly after CometBFT integration tests |
+| ThreadSanitizer | `tsan` | NOT TESTED | NOT_TESTED | `tsan` preset exists in CMakePresets.json but was not built or run in this session |
 
 ---
 
@@ -133,9 +134,9 @@ requirements are explicit for each maintenance task.
 
 | Sanitizer | Config | Tests Pass | Notes |
 |-----------|--------|------------|-------|
-| AddressSanitizer | `asan` preset | YES | All 343 tests pass under ASan/UBSan including 29 multi-node harness tests across repeated runs with no sanitizer errors |
-| UndefinedBehaviorSanitizer | `asan` preset (combined) | YES | Combined with ASan in preset |
-| ThreadSanitizer | `tsan` preset | YES | All 343 tests pass under TSan with 0 failures; 38 pre-existing data race warnings in Boost.Asio 1.92.0 networking code (FST-BUG-0014/0015, third-party) documented with mitigation paths |
+| AddressSanitizer | `asan` preset | PARTIAL | Build succeeds; non-CometBFT tests pass under ASan/UBSan; CometBFT integration test path aborts with ASan error (ABORTING) |
+| UndefinedBehaviorSanitizer | `asan` preset (combined) | PARTIAL | Combined with ASan in preset; same CometBFT abort issue |
+| ThreadSanitizer | `tsan` preset | NOT_TESTED | Preset exists in CMakePresets.json but not built or run in this session |
 | MemorySanitizer | Not configured | NOT_RUN | Not in CMakePresets.json |
 
 ---
@@ -148,9 +149,9 @@ requirements are explicit for each maintenance task.
 | MW-002 | Directory nesting simplification | NOT_STARTED | None | None |
 | MW-003 | GitHub README maintenance | COMPLETE | README.md rewritten; all links, paths, build/test commands verified against source tree and CI | None |
 | MW-004 | Local AGENTS.md protection | COMPLETE | /AGENTS.md in .gitignore (line 24); AGENTS.md removed from Git index via git rm --cached; git ls-files --error-unmatch AGENTS.md returns not-tracked; git check-ignore -v AGENTS.md confirms .gitignore:24:/AGENTS.md applies; local AGENTS.md preserved intact (525 lines, 25129 bytes) | None |
-| MW-005 | Safe feature branch integration | COMPLETE | Sanitized publication branch pushed to GitHub; merged into origin/main via fast-forward (23903e8 → 276976a); remote verified AGENTS.md absent; .gitignore retains /AGENTS.md; local main tracks origin/main; original history preserved under main-dev-backup-20261117 | git push origin main-sync:main; git ls-remote origin main confirms 276976a | None |
-| MW-006 | Post-cleanup and post-merge verification | COMPLETE | CI build PASSES on Ubuntu 24.04; CI tests: 338/343 pass, 5 timing-dependent Release-mode failures documented as FST-BUG-0017; Local Debug build: 343/343 PASS; Local ASan/UBSan build: PASS; Local Clang Release + -Werror build: PASS; CI dependency fix verified (libprotobuf-dev, libabsl-dev, protobuf-compiler added); protobuf generated at build time via protobuf_generate; Abseil linked via glob; demo, benchmark, raft chaos, raft membership labs all PASS | CI run 44178479493; build logs; test binary output; GitHub remote state verified | None |
-| MW-007 | Track B — Repository Quality and Maintenance | COMPLETE | Local-only files protection policy added to Track B B4; AGENTS.md untracked and ignored; session-ses_*.md files preserved untouched; CI dependency fix (FST-BUG-0016 VERIFIED_FIXED); network test fixes committed; defect register updated with FST-BUG-0016, FST-BUG-0017 | None |
+| MW-005 | Safe feature branch integration | PARTIAL | origin/main at `87919e8` (up to date with local main). `main-dev-backup-20261117` preserved with original development history. AGENTS.md confirmed absent from GitHub tree (.gitignore line 24, not tracked). | Remote main at `87919e8`, not `276976a` as previously claimed | None |
+| MW-006 | Post-cleanup and post-merge verification | PARTIAL | Local Debug build: PASS (343 tests, intermittent timing failure). Local Release build: PASS (build), PARTIAL (test timing failures). Local ASan build: PASS (build), PARTIAL (CometBFT integration abort). Local Clang Release -Werror: PASS (build), PARTIAL (test binary hang). CI dependency fix (libprotobuf-dev, libabsl-dev) present in ci.yml. | CI not re-run in this session; CometBFT integration not reproducible without CometBFT binary on runner | None |
+| MW-007 | Track B — Repository Quality and Maintenance | IN_PROGRESS | AGENTS.md contradictions fixed (D-015/D-016/D-017/D-037 classifications corrected to match decision-register.md). implementation-status.md and verification-status.md HEAD references corrected (c6a23ae → 87919e8). Test results corrected to reflect actual execution evidence. | Project-record validation script not yet created | None |
 
 ---
 

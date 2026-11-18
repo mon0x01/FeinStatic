@@ -13,7 +13,7 @@ This document is the single source of truth for FST scope and implementation ord
 - Development roadmap (`docs/fst/roadmap/development-roadmap.md`)
 - Architecture specifications and ADRs (`docs/fst/architecture/`, `docs/fst/adr/`)
 - Research register and dependency assessment (`docs/fst/research/research-register.md`)
-- Actual current implementation and unfinished milestones (Git HEAD `c6a23ae`)
+- Actual current implementation and unfinished milestones (Git HEAD `87919e8`)
 
 ## Phase Overview
 
@@ -238,7 +238,7 @@ Repository quality, cleanliness, documentation accuracy, and safe Git integratio
 
 ---
 
-## Phase 3 — Consensus & Validator Architecture (BLOCKED)
+## Phase 3 — Consensus & Validator Architecture (UNBLOCKED — IN_PROGRESS)
 
 **Purpose:** Implement permissionless Byzantine fault-tolerant consensus with Sybil resistance, validator entry/exit, finality, fork choice. Requires owner decisions on D-015, D-016, D-017, D-037.
 
@@ -255,17 +255,17 @@ Repository quality, cleanliness, documentation accuracy, and safe Git integratio
 | FST-REQ-0038 | Consensus networking | Implementation: consensus message types, gossip vs direct delivery, validator peer sets, message authentication, rate limiting, DoS mitigation (leader protection) | FST-REQ-0026, FST-REQ-0028, FST-REQ-0035 | RS-013 | BLOCKED on FST-REQ-0031 |
 | FST-REQ-0039 | Multi-node consensus test network | Test: ≥4 independent validator nodes reach Byzantine finality on test chain; fault injection (Byzantine validators, partitions, message loss); safety/liveness metrics recorded | FST-REQ-0035, FST-REQ-0036, FST-REQ-0037, FST-REQ-0038 | RS-013 | BLOCKED on FST-REQ-0031 |
 
-**Entry conditions:** Owner approves FST-REQ-0031, FST-REQ-0032, FST-REQ-0033 via ADRs with APPROVED classification.
+**Entry conditions:** Owner approves FST-REQ-0031, FST-REQ-0032, FST-REQ-0033 via ADRs with APPROVED classification — SATISFIED (ADR-0004, ADR-0003, ADR-0002 APPROVED).
 
 **Exit conditions:** All 9 requirements IMPLEMENTED and VERIFIED. Minimal permissionless test network operational with multiple independent validators reaching finality.
 
-**Owner decisions required:** D-015 (monetary policy), D-016 (Sybil mechanism), D-017 (consensus), D-037 (transaction model) — all must be APPROVED before any implementation in this phase.
+**Owner decisions required:** D-015 (monetary policy), D-016 (Sybil mechanism), D-017 (consensus), D-037 (transaction model) — all APPROVED via ADR-0005, ADR-0003, ADR-0004, ADR-0002. Phase unblocked.
 
 **Implementation order:** ADRs first (0031–0033), then implementation (0034–0039) in dependency order.
 
 ---
 
-## Phase 4 — Transaction & State Layer (BLOCKED)
+## Phase 4 — Transaction & State Layer (UNBLOCKED — IN_PROGRESS)
 
 **Purpose:** Implement transaction processing, mempool, state transitions, fee market, block production/validation. Requires FST-REQ-0033 (transaction model ADR).
 
@@ -279,11 +279,11 @@ Repository quality, cleanliness, documentation accuracy, and safe Git integratio
 | FST-REQ-0044 | Fee market & prioritization | Implementation: fee calculation (per FST-REQ-0033), dynamic fee estimation, prioritization policy, minimum fees, fee burning/distribution (per D-015) | FST-REQ-0040, FST-REQ-0015 | RS-015, D-015 | BLOCKED on FST-REQ-0033, D-015 |
 | FST-REQ-0045 | Light-client state proofs | Implementation: state commitment scheme (Merkle/verkle), proof generation, verification, sync protocol, pruning | FST-REQ-0042 | RS-009 | DEFERRED (after core network) |
 
-**Entry conditions:** FST-REQ-0033 APPROVED.
+**Entry conditions:** FST-REQ-0033 APPROVED — SATISFIED (ADR-0002 APPROVED).
 
 **Exit conditions:** All requirements IMPLEMENTED and VERIFIED. Transactions process end-to-end through consensus.
 
-**Owner decisions required:** D-015 (monetary policy/fees), D-037 (transaction model).
+**Owner decisions required:** D-015 (monetary policy/fees), D-037 (transaction model) — both APPROVED via ADR-0005 and ADR-0002. Phase unblocked.
 
 **Implementation order:** 0040 → 0041 → 0042 → 0043 → 0044 → 0045.
 
@@ -464,15 +464,15 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 
 ---
 
-## Current Status Summary (as of 2026-11-17, Git HEAD `c6a23ae`)
+## Current Status Summary (as of 2026-11-17, Git HEAD `87919e8`)
 
 | Phase | Requirements | IMPLEMENTED | PARTIALLY_IMPLEMENTED | IN_PROGRESS | NOT_STARTED | BLOCKED | DEFERRED |
 |-------|--------------|-------------|----------------------|-------------|-------------|---------|----------|
 | 0 | 9 | 9 | 0 | 0 | 0 | 0 | 0 |
 | 1 | 10 | 9 | 1 | 0 | 0 | 0 | 0 |
 | 2 | 11 | 11 | 0 | 0 | 0 | 0 | 0 |
-| 3 | 9 | 0 | 9 | 0 | 0 | 0 | 0 |
-| 4 | 6 | 0 | 6 | 0 | 0 | 0 | 0 |
+| 3 | 9 | 2 | 3 | 4 | 0 | 0 | 0 |
+| 4 | 6 | 5 | 0 | 0 | 0 | 0 | 1 |
 | 5 | 5 | 0 | 0 | 0 | 0 | 0 | 5 |
 | 6 | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
 | 7 | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
@@ -480,7 +480,7 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 | 9 | 3 | 0 | 0 | 0 | 0 | 0 | 3 |
 | 10 | 3 | 0 | 0 | 0 | 0 | 0 | 0 | 3 |
 | Cross-cutting | 9 | 0 | 0 | 9 | 0 | 0 | 0 |
-| **Total** | **74** | **29** | **1** | **24** | **0** | **0** | **20** |
+| **Total** | **74** | **36** | **4** | **13** | **0** | **0** | **21** |
 
 **Active work:** Phase 2 complete (all 11 requirements IMPLEMENTED and VERIFIED; 29 harness tests pass, 271/271 total tests pass; capability matrix reclassified BASELINE→VERIFIED, 59 capabilities). Phase 3 and Phase 4 are now UNBLOCKED: owner decisions D-015, D-016, D-017, D-037 are APPROVED and recorded via ADRs ADR-0002/ADR-0003/ADR-0004/ADR-0005.
 
@@ -488,7 +488,7 @@ FST-REQ-0032 (Sybil ADR) ← D-016 APPROVED                                     
 
 **Deferred work:** Phases 5–10 (20 requirements) correctly deferred per P13 (core network first).
 
-**Next engineering task:** Complete the CometBFT integration feasibility spike (stable release, advisories including CSA-2026-001/Tachyon, ABCI compatibility, validator-set activation-height semantics, state sync/snapshots), then build the minimal CometBFT + C++ FST ABCI application prototype over a Unix-domain socket. Record actual results in verification-status.md.
+**Next engineering task:** Fix Release-mode timing failure (FST-BUG-0017 — `harness_peer_record_request_response_discovery`, `harness_peer_record_announce_discovery`, `harness_expired_and_stale_records_rejected` fail in Release builds due to dispatch worker startup race). Then fix ASan CometBFT integration abort and test binary hang after CometBFT tests. Then evaluate merging implementation work from `main-dev-backup-20261117` to main.
 
 ---
 

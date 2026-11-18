@@ -81,7 +81,7 @@
 |-------|-------|
 | **Summary** | `NetworkRuntime::initialize` default-constructs `std::error_code ec` (success) and never sets it on failure. Identity load failures (`FileKeyProvider::load` throws), TLS credential generation failures, and store open failures propagate as C++ exceptions rather than being returned as error codes. |
 | **Severity** | HIGH |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:22-144`, `include/feinstat/network/network_runtime.hpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix diagnostic P-A2) |
@@ -103,7 +103,7 @@
 |-------|-------|
 | **Summary** | `NetworkRuntime::initialize` stores `config_` and proceeds to acquire resources without validating `network_identifier` (must be 32 bytes per D-036), listen address, or other settings. |
 | **Severity** | MEDIUM |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:41-48`, `include/feinstat/network/network_runtime.hpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix diagnostic P-A3) |
@@ -125,7 +125,7 @@
 |-------|-------|
 | **Summary** | `NetworkRuntime` constructs `dispatcher_` but never registers control-plane handlers and never calls `dispatch()` on any session. There is no receive/dispatch worker. |
 | **Severity** | CRITICAL |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0026 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp`, `include/feinstat/network/network_runtime.hpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix finding #3, diagnostic P-D3) |
@@ -147,7 +147,7 @@
 |-------|-------|
 | **Summary** | `NetworkRuntime::load_bootstrap_records()` exists but is never called by the runtime. Valid bootstrap records are not used to initiate connections. |
 | **Severity** | HIGH |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0023 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:207-230`, `src/network/bootstrap.cpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix finding #4, diagnostic P-E1) |
@@ -169,7 +169,7 @@
 |-------|-------|
 | **Summary** | When a remote peer closes a connection, `SecureSession::receive_message` returns an error but `AdmissionController` is not notified. The session remains in `sessions_` map and its inbound/outbound counter is never decremented. |
 | **Severity** | HIGH |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0027 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:394-417`, `include/feinstat/network/peer_admission.hpp:83` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix finding #5, diagnostic P-F3, P-B5) |
@@ -191,7 +191,7 @@
 |-------|-------|
 | **Summary** | `kPing`, `kPong`, `kDisconnect`, `kPeerRecordRequest`, `kPeerRecordResponse`, `kPeerRecordAnnounce` are defined in `PeerMessageType` but have no default handler implementations. |
 | **Severity** | HIGH |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0026 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:232-329`, `include/feinstat/network/message_dispatch.hpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix finding #6, diagnostic P-D4) |
@@ -213,7 +213,7 @@
 |-------|-------|
 | **Summary** | `SignedNodeRecord::serialize()`/`parse()` exist, but there is no bounded message framing for carrying peer records in `kPeerRecordRequest`/`kPeerRecordResponse`/`kPeerRecordAnnounce`. |
 | **Severity** | MEDIUM |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0024, FST-REQ-0026 |
 | **Affected Modules/Files** | `src/network/message_dispatch.cpp:58-150`, `include/feinstat/network/message_dispatch.hpp:81-112` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix finding #7) |
@@ -235,7 +235,7 @@
 |-------|-------|
 | **Summary** | `PeerExchange::exchange` accepts a locally-supplied `receive_records` vector and performs no network I/O. It does not transmit records over an authenticated session. |
 | **Severity** | MEDIUM |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0024 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:256-271`, `include/feinstat/network/peer_exchange.hpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix finding #8, diagnostic P-E4) |
@@ -257,7 +257,7 @@
 |-------|-------|
 | **Summary** | `NetworkRuntime::initialize` re-assigns members without cleaning up partial state from previous initialization. Calling `initialize` twice on the same runtime instance leads to resource leaks and undefined behaviour. |
 | **Severity** | MEDIUM |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:22-36`, `include/feinstat/network/network_runtime.hpp` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix diagnostic P-G5) |
@@ -279,7 +279,7 @@
 |-------|-------|
 | **Summary** | In `AdmissionController::on_connect`, handshake errors close the session but inbound connection counter is not incremented on success path until after handshake, and not decremented on failure path. |
 | **Severity** | LOW |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0027 |
 | **Affected Modules/Files** | `src/network/peer_admission.cpp:101-176, 325-336`, `include/feinstat/network/peer_admission.hpp:83` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix C4) |
@@ -301,7 +301,7 @@
 |-------|-------|
 | **Summary** | `FileKeyProvider::load` throws `std::runtime_error` on missing/malformed identity file. `NetworkRuntime::initialize` does not catch this, causing exception propagation instead of clean error_code return. |
 | **Severity** | HIGH |
-| **Status** | VERIFIED_FIXED |
+| **Status** | FIXED_PENDING_VERIFICATION |
 | **Affected Requirement IDs** | FST-REQ-0028, FST-REQ-0020 |
 | **Affected Modules/Files** | `src/network/network_runtime.cpp:54-66` |
 | **Discovery Commit** | `23903e8` (baseline capability matrix A3, diagnostic P-A2) |
@@ -387,11 +387,11 @@
 
 | Severity | OPEN | INVESTIGATING | FIX_IN_PROGRESS | FIXED_PENDING_VERIFICATION | VERIFIED_FIXED | OWNER_ACCEPTED_RISK | DUPLICATE | Total |
 |----------|------|---------------|-----------------|----------------------------|----------------|---------------------|-----------|-------|
-| CRITICAL | 0 | 0 | 0 | 0 | 2 | 0 | 0 | 2 |
-| HIGH | 1 | 1 | 0 | 0 | 5 | 0 | 0 | 0 | 7 |
-| MEDIUM | 4 | 0 | 0 | 0 | 4 | 0 | 0 | 0 | 8 |
-| LOW | 0 | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
-| **Total** | **1** | **0** | **0** | **0** | **12** | **0** | **0** | **13** |
+| CRITICAL | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
+| HIGH | 1 | 1 | 0 | 5 | 0 | 0 | 0 | 7 |
+| MEDIUM | 4 | 0 | 0 | 4 | 0 | 0 | 0 | 8 |
+| LOW | 0 | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
+| **Total** | **5** | **1** | **0** | **11** | **1** | **0** | **0** | **17** |
 
 ---
 
@@ -422,11 +422,15 @@
 
 ## Notes
 
-- All 12 defects are from the Phase 2 baseline diagnostic (capability matrix at commit `23903e8`).
+- All 17 defects are from the Phase 2 baseline diagnostic (capability matrix at commit `23903e8`) and CI/test execution.
 - No defects yet from test execution — harness tests not integrated.
 - Defects FST-BUG-0003, 0004, 0005, 0006, 0008 are blockers for FST-REQ-0028 completion.
 - Defects FST-BUG-0001, 0002, 0009, 0011 are robustness issues for `NetworkRuntime::initialize`.
 - Defect FST-BUG-0012 is a process defect (CI coverage).
+- Defects FST-BUG-0014, 0015 are TSan data race issues in Boost.Asio networking code.
+- Defect FST-BUG-0013 is a TSan data race in SecureSession handshake handling.
+- Defect FST-BUG-0016 is VERIFIED_FIXED (commit `276976a`).
+- Defect FST-BUG-0017 is OPEN (Release-mode timing failures).
 - Per project plan: never erase bug history. Close defects with evidence (fix commit + passing regression test), not merely by changing status.
 - When a test fails, determine whether it exposes a new defect, a known defect, an infrastructure failure, or an invalid test assumption.
 - Cross-reference: `docs/fst/operations/implementation-status.md` (requirement status), `docs/fst/operations/verification-status.md` (test coverage), `docs/fst/architecture/network-runtime-capability-matrix.md` (diagnostic probes).

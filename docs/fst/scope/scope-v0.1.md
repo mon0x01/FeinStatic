@@ -199,3 +199,63 @@ The following are explicitly **not** part of this documentation-only milestone:
 - [`../decisions/decision-register.md`](../decisions/decision-register.md) — Decision classifications.
 - [`../research/research-register.md`](../research/research-register.md) — Research register.
 - [`../roadmap/development-roadmap.md`](../roadmap/development-roadmap.md) — Development roadmap.
+
+---
+
+## Current-Scope Amendment (2026-11-17)
+
+This amendment records the current status of the scope document and reconciles it with later approved decisions. The original document text above is preserved unchanged.
+
+### Document status
+
+- **Recorded status:** DRAFT (first recorded version)
+- **Classification:** APPROVED (principles and scope as recorded by the project owner)
+- **Reconciliation:** The DRAFT recording status reflects the document's versioning history, not its approval status. The scope principles and boundaries are APPROVED. Subsequent decisions recorded in `docs/fst/decisions/decision-register.md` may refine or supersede specific scope items; the decision register is authoritative for classification.
+
+### Decision classifications (verified against decision-register.md)
+
+| Decision | ID | Classification | Source |
+|----------|-----|----------------|--------|
+| Monetary policy | D-015 | APPROVED | `decision-register.md`, ADR-0005 |
+| Permissionless validator participation | D-016 | APPROVED | `decision-register.md`, ADR-0003 |
+| BFT consensus and finality | D-017 | APPROVED | `decision-register.md`, ADR-0004 |
+| Offline financial operation | D-018 | PROVISIONAL | `decision-register.md` |
+| Modular multi-transport communication | D-019 | PROVISIONAL | `decision-register.md` |
+| Strong cryptographic privacy | D-020 | PROVISIONAL | `decision-register.md` |
+| Provisional fork and migration design | D-021 | PROVISIONAL | `decision-register.md` |
+| Independent client implementation count | D-035 | OPEN RESEARCH | `decision-register.md` |
+| Fork protection requirements | D-036 | APPROVED (reqs), mechanisms OPEN RESEARCH | `decision-register.md` |
+| Transaction model and state representation | D-037 | APPROVED | `decision-register.md`, ADR-0002 |
+
+### Current implementation scope
+
+The following items, previously listed as "out of scope for this milestone" in the original document, are now part of the approved implementation scope based on APPROVED decisions D-015, D-016, D-017, and D-037:
+
+- Consensus implementation (stake-weighted BFT with CometBFT candidate, per D-017/ADR-0004)
+- Blockchain networking implementation (P2P networking foundation, per D-016/D-019)
+- Monetary policy implementation (predetermined declining issuance, congestion-adjusted fees, per D-015/ADR-0005)
+- Transaction model implementation (UTXO canonical ledger, per D-037/ADR-0002)
+
+The following remain outside the current implementation scope:
+
+- Wallet implementation (not part of approved core network scope)
+- Offline operation implementation (D-018 PROVISIONAL, research only)
+- Multi-transport beyond internet/TCP (D-019 PROVISIONAL, research only)
+- Strong cryptographic privacy mechanisms (D-020 PROVISIONAL, research only)
+- Migration functionality (D-021 PROVISIONAL, explicitly "Do not implement migration functionality in this milestone")
+- Financial accounts, payments, settlement (Phase 5, DEFERRED)
+- Privacy layer (Phase 6, DEFERRED)
+- Mesh/radio/satellite/DTN transports (Phase 7, DEFERRED)
+- Governance, upgrades, fork safety implementation (Phase 8, DEFERRED)
+- Independent implementations and conformance (Phase 9, DEFERRED)
+- Production hardening and mainnet readiness (Phase 10, DEFERRED)
+
+### Distinctions
+
+- **Long-term project vision:** Decentralised financial network with FST as native currency, operating token, and settlement asset (original scope, Section "Native currency" and "Financial functionality").
+- **Approved current architecture:** UTXO ledger (D-037), permissionless PoS (D-016), stake-weighted BFT consensus with CometBFT candidate (D-017), deterministic monetary issuance and fees (D-015).
+- **Current implementation scope:** Phases 0–2 complete; Phases 3–4 unblocked and in progress per `docs/fst/operations/project-plan.md`.
+- **Deferred functionality:** Phases 5–10 per `docs/fst/operations/project-plan.md`.
+- **Provisional directions:** D-018, D-019, D-020, D-021 (require validation before implementation).
+- **Open research:** D-035, D-036 mechanisms, RS-001 through RS-015 entries per `docs/fst/research/research-register.md`.
+- **Explicitly prohibited or superseded designs:** Regional outage extensions (superseded, original scope Section "Regional outage extensions"); FeinStatic BridgeService single-vault custody (conflicts with P1, P2, P8); FeinStatic Raft as production consensus (crash-fault only, not BFT); FeinStatic operator roles and trust store (permanent privileged authority).

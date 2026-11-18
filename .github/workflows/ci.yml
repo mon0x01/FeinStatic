@@ -9,17 +9,53 @@ permissions:
 
 jobs:
   verify:
-    name: Build, test, sanitize, and benchmark
+    name: Build, test, sanitize, and validate
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
       - name: Install toolchain and dependencies
         run: |
+          set -Eeuo pipefail
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake ninja-build libssl-dev libsqlite3-dev libboost-dev libprotobuf-dev libabsl-dev protobuf-compiler
 
+      - name: Install Go toolchain
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          check-latest: true
+
+      - name: Install CometBFT v0.40.0
+        run: |
+          set -Eeuo pipefail
+          COMETBFT_VERSION="v0.40.0"
+          COMETBFT_ARCH="linux-amd64"
+          COMETBFT_TARBALL="cometbft_${COMETBFT_VERSION}_${COMETBFT_ARCH}.tar.gz"
+          COMETBFT_URL="https://github.com/cometbft/cometbft/releases/download/${COMETBFT_VERSION}/${COMETBFT_TARBALL}"
+
+          # Download CometBFT release
+          curl -fsSL -o /tmp/cometbft.tar.gz "${COMETBFT_URL}"
+
+          # Verify SHA256 checksum against the release's checksums file
+          curl -fsSL -o /tmp/cometbft.sha256 "${COMETBFT_URL}.sha256"
+          cd /tmp
+          sha256sum -c cometbft.sha256
+
+          # Extract and install CometBFT binary
+          tar -xzf cometbft.tar.gz
+          install -m 0755 cometbft /usr/local/bin/cometbft
+          cometbft version
+
       - name: Run complete verification matrix
-        run: ./scripts/verify-all.sh
+        run: |
+          set -Eeuo pipefail
+          export COMETBFT_PATH=/usr/local/bin/cometbft
+          ./scripts/verify-all.sh
+
+      - name: Validate project records
+        run: |
+          set -Eeuo pipefail
+          bash scripts/validate-project-records.sh
