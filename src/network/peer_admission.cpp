@@ -48,14 +48,22 @@ void AdmissionController::start_listening(const std::string& address, std::uint1
 void AdmissionController::stop() noexcept {
     if (!running_) return;
     running_ = false;
+
+    // Stop the io_context and join its thread before touching any socket.
+    // Once the io thread has exited there are no concurrent socket operations,
+    // so closing sockets from this thread is race-free (FST-BUG-0014 /
+    // FST-BUG-0015: socket_ops::close / reactive_socket_service_base accessed
+    // from the caller thread while the io thread is still using the socket).
+    // The sockets are closed explicitly so peers observe EOF and remove the
+    // session from their admission tables -- shutdown does not hang.
+    io_.stop();
+    if (io_thread_.joinable()) io_thread_.join();
+
     boost::system::error_code ec;
     if (acceptor_) acceptor_->close(ec);
+
     // Snapshot the sessions under the lock, then close each transport socket
-    // synchronously so that peers observe EOF even if the io_context is stopped
-    // before the strand-bound close_locked handlers can be dispatched. The old
-    // approach posted close() to the strand and then stopped the io_context,
-    // which left close_locked (and thus the socket close) from ever running,
-    // so the peer's read loop never saw EOF and shutdown hung.
+    // now that the io thread is stopped (no concurrent socket ops remain).
     std::vector<std::shared_ptr<PeerSession>> sessions;
     {
         std::lock_guard<std::mutex> lock(sessions_mutex_);
@@ -69,11 +77,8 @@ void AdmissionController::stop() noexcept {
     }
     for (auto& s : sessions) {
         boost::system::error_code close_ec;
-        s->secure_session().socket().cancel(close_ec);
         s->secure_session().socket().close(close_ec);
     }
-    io_.stop();
-    if (io_thread_.joinable()) io_thread_.join();
 }
 
 void AdmissionController::do_accept() {
