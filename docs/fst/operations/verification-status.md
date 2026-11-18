@@ -2,10 +2,59 @@
 
 **Status:** ESTABLISHED — reconciled from actual test code, test results, and implementation status.
 
-**Version:** 1.0
-**Date:** 2026-11-17
-**Git HEAD:** `52341a04d2ac095b64df1bcc8d11790dfc179950` (main, up to date with origin/main)
+**Version:** 1.1
+**Date:** 2026-11-18
+**Git HEAD:** `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (team/verification worktree, detached at integration-baseline target b85bc4a; all builds and tests in this baseline executed at this exact SHA)
 **Classification:** Live document — updated at every durable checkpoint where tests run.
+
+---
+
+## Verification Baseline — integration HEAD b85bc4a (2026-11-18)
+
+This section records a fresh five-preset verification baseline executed at commit
+`b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (the integration HEAD target specified
+for this baseline). All builds and tests below ran against this exact SHA in a clean
+checkout (pre-existing `build/*` directories removed first). No source, tests, or
+build configuration was modified by this agent.
+
+### Dependency / license check (Technology and Dependency Acceptance Policy)
+- All build dependencies resolve via the system package manager; debug, release,
+  asan, and tsan presets configure, build, and link with exit code 0.
+- Toolchain observed in logs: gcc/g++, clang/clang++, cmake 4.5.0, Ninja generator;
+  protobuf 36.1.0 (`libprotobuf.so.36.1.0`) present; Boost, OpenSSL, Abseil linked.
+  No unreviewed dependencies introduced by this verification.
+- CometBFT v0.40.0 (Apache-2.0) ABCI integration is present in the tree; per the
+  dependency acceptance policy its production adoption requires owner sign-off and
+  is not approved by this verification. (See `docs/fst/policies/technology-and-dependency-acceptance.md`.)
+
+### Per-preset results
+Command pipeline per preset: `cmake --preset <name>` → `cmake --build build/<name> -j4`
+→ `timeout 600 ./build/<name>/feinstatic_tests`. Full output captured to
+`/tmp/kilo/verify-b85bc4a-<preset>-{configure,build,tests}.log`.
+
+| Preset | Configure exit | Build exit | Tests exit | Test result | Log location |
+|--------|---------------|-----------|-----------|-------------|--------------|
+| debug | 0 | 0 | 0 | 343 passed, 0 failed, 343 registered — **PASS** | /tmp/kilo/verify-b85bc4a-debug-{configure,build,tests}.log |
+| release | 0 | 0 | 1 | 339 passed, 4 failed, 343 registered — all 4 are timing `receive_next` timeouts in network harness (FST-BUG-0017 class) | /tmp/kilo/verify-b85bc4a-release-{configure,build,tests}.log |
+| asan | 0 | 0 | 1 | 14 ABCI unit tests pass, then SEGV abort in protobuf `MergeFromImpl` via `src/consensus/abci/abci_codec.cpp:705` (`read_framed_message`) during CometBFT integration (`==ABORTING`) | /tmp/kilo/verify-b85bc4a-asan-{configure,build,tests}.log |
+| clang-release | 0 | 1 | skipped | **BUILD FAIL**: `src/consensus/abci/fst_application.cpp:213` `-Wsign-conversion` (`int64_t`→`uint64_t` in `would_fork(request.height)`) under `-Werror`; tests not run | /tmp/kilo/verify-b85bc4a-clang-release-{configure,build}.log |
+| tsan | 0 | 0 | 0 | 343 passed, 0 failed, 343 registered — **PASS**; no ThreadSanitizer warnings | /tmp/kilo/verify-b85bc4a-tsan-{configure,build,tests}.log |
+
+### Gate evaluation
+- Gate "all five presets build exit 0": **NOT MET** — clang-release build exits 1 (sign-conversion error under `-Werror`).
+- Gate "debug suite 343/343 PASS": **MET** — debug 343 passed, 0 failed, exit 0.
+- Overall five-preset baseline gate: **NOT PASSED** (clang-release build failure blocks the "all five build exit 0" condition).
+
+### Verification defects observed this session (reported to Integration Agent → Debugging Agent)
+This agent does not assign defect IDs and does not edit `defect-register.md`. Exact-SHA evidence for each: `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe`.
+
+| Ref | Summary | Severity | Preset | Command | Exit code | Log |
+|-----|---------|----------|--------|---------|-----------|-----|
+| VDEF-b85bc4a-001 | clang-release build failure: `fst_application.cpp:213` implicit signedness conversion `int64_t`→`uint64_t` in `would_fork(request.height)`, treated as error by `-Werror` | HIGH | clang-release | `cmake --preset clang-release && cmake --build build/clang-release -j4` | 1 | /tmp/kilo/verify-b85bc4a-clang-release-build.log |
+| VDEF-b85bc4a-002 | ASan SEGV in protobuf `MergeFromImpl` via `abci_codec.cpp:705` `read_framed_message` → `handle_connection` → `AbciSocketServer::accept_loop`/`run` during CometBFT single-node genesis-and-commit; `==ABORTING`, CometBFT logs "connection reset by peer"/"Did the application crash?" | HIGH | asan | `timeout 600 ./build/asan/feinstatic_tests` | 1 | /tmp/kilo/verify-b85bc4a-asan-tests.log |
+| VDEF-b85bc4a-003 | Release-mode timing failures: 4 network harness tests time out on `alice.receive_next(..., 30s)` (`peer_record_request_response_discovery:375`, `wrong_network_record_rejected:503`, `expired_and_stale_records_rejected:542`, `duplicate_peer_discovery_no_storm:909`) — same class as FST-BUG-0017 | MEDIUM | release | `timeout 600 ./build/release/feinstatic_tests` | 1 | /tmp/kilo/verify-b85bc4a-release-tests.log |
+
+Notes: `src/consensus/abci/fst_application.cpp` and `src/consensus/abci/abci_codec.cpp` are within active `fst-implementation` ownership reservations (src/consensus/**) for Phase 3 completion task IT-01; this agent reports findings only and does not edit them.
 
 ---
 
@@ -122,11 +171,11 @@ requirements are explicit for each maintenance task.
 
 | Config | Preset | Command | Status | Notes |
 |--------|--------|---------|--------|-------|
-| Debug | `debug` | `cmake --preset debug && cmake --build build/debug -j4` | PASS | Builds successfully; `./build/debug/feinstatic_tests` — 343/343 PASS, 0 failed |
-| Release | `release` | `cmake --preset release && cmake --build build/release -j4` | BUILD_PASS / TEST_HANG | Builds successfully; test suite hangs after CometBFT integration tests (FST-BUG-0017, deferred per Phase 3); 4 harness timing failures known (harness_peer_record_request_response_discovery, harness_peer_record_announce_discovery, harness_invalid_signed_record_rejected, harness_expired_and_stale_records_rejected) |
-| AddressSanitizer + UBSan | `asan` | `cmake --preset asan && cmake --build build/asan -j4` | BUILD_PASS / TEST_ABORT | Build succeeds; non-CometBFT tests pass under ASan/UBSan; CometBFT integration test path aborts with ASan error (ABORTING, cometbft_single_node_genesis_and_commit at tests/cometbft_integration_tests.cpp:157) — deferred per Phase 3 |
-| Clang Release (-Werror) | `clang-release` | `cmake --preset clang-release && cmake --build build/clang-release -j4` | BUILD_PASS / TEST_HANG | Builds warning-free under -Werror; 332/343 pass, 4 harness timing failures (FST-BUG-0017); binary does not exit cleanly after CometBFT integration tests (hangs, timeout exit code 124) — deferred per Phase 3 |
-| ThreadSanitizer | `tsan` | `cmake --preset tsan && cmake --build build/tsan -j4` | BUILD_PASS / TEST_PARTIAL | Builds successfully; 339/343 pass, 4 terminal_tests failures (no TTY in environment, unrelated to code changes); 4 TSan warnings (Boost.Asio 1.92.0 races FST-BUG-0014/0015, known third-party) |
+| Debug | `debug` | `cmake --preset debug && cmake --build build/debug -j4 && timeout 600 ./build/debug/feinstatic_tests` | BUILD_PASS / TEST_PASS | Configure exit 0; build exit 0; tests: 343 passed, 0 failed, 343 registered, exit 0. Gate "debug 343/343 PASS" met. Log: /tmp/kilo/verify-b85bc4a-debug-{configure,build,tests}.log |
+| Release | `release` | `cmake --preset release && cmake --build build/release -j4 && timeout 600 ./build/release/feinstatic_tests` | BUILD_PASS / TEST_FAIL | Configure exit 0; build exit 0; tests: 339 passed, 4 failed, 343 registered, exit 1. Failures: harness_peer_record_request_response_discovery (:375), harness_wrong_network_record_rejected (:503), harness_expired_and_stale_records_rejected (:542), harness_duplicate_peer_discovery_no_storm (:909) — all timing `receive_next` 30s timeouts (FST-BUG-0017 class). No hang; suite exits cleanly. Log: /tmp/kilo/verify-b85bc4a-release-{configure,build,tests}.log |
+| AddressSanitizer + UBSan | `asan` | `cmake --preset asan && cmake --build build/asan -j4 && timeout 600 ./build/asan/feinstatic_tests` | BUILD_PASS / TEST_ABORT | Configure exit 0; build exit 0; 14 ABCI unit tests pass then AddressSanitizer DEADLYSIGNAL/SEGV in protobuf `MergeFromImpl` via `src/consensus/abci/abci_codec.cpp:705` (`read_framed_message`) during CometBFT integration; `==ABORTING`, exit 1. Same defect class as prior ASan abort (line shifted from :674 at earlier SHA). Log: /tmp/kilo/verify-b85bc4a-asan-{configure,build,tests}.log |
+| Clang Release (-Werror) | `clang-release` | `cmake --preset clang-release && cmake --build build/clang-release -j4` | BUILD_FAIL / TEST_NOT_RUN | Configure exit 0; **build exit 1**: `src/consensus/abci/fst_application.cpp:213` `-Wsign-conversion` (`int64_t`→`uint64_t` in `would_fork(request.height)`) under `-Werror`. Tests not run. Gate "all five presets build exit 0" NOT met. Log: /tmp/kilo/verify-b85bc4a-clang-release-{configure,build}.log |
+| ThreadSanitizer | `tsan` | `cmake --preset tsan && cmake --build build/tsan -j4 && timeout 600 ./build/tsan/feinstatic_tests` | BUILD_PASS / TEST_PASS | Configure exit 0; build exit 0; tests: 343 passed, 0 failed, 343 registered, exit 0; no ThreadSanitizer warnings. Includes cometbft_single_node_genesis_and_commit and cometbft_multi_node_genesis_agreement. Log: /tmp/kilo/verify-b85bc4a-tsan-{configure,build,tests}.log |
 
 ---
 
@@ -134,9 +183,9 @@ requirements are explicit for each maintenance task.
 
 | Sanitizer | Config | Tests Pass | Notes |
 |-----------|--------|------------|-------|
-| AddressSanitizer | `asan` preset | PARTIAL | Build succeeds; non-CometBFT tests pass under ASan/UBSan; CometBFT integration test path aborts with ASan error (ABORTING) — deferred per Phase 3 |
-| UndefinedBehaviorSanitizer | `asan` preset (combined) | PARTIAL | Combined with ASan in preset; same CometBFT abort issue — deferred per Phase 3 |
-| ThreadSanitizer | `tsan` preset | PARTIAL | 339/343 pass; 4 terminal_tests failures (no TTY, unrelated); 4 TSan warnings (Boost.Asio 1.92.0 races FST-BUG-0014/0015, known third-party) |
+| AddressSanitizer | `asan` preset | PARTIAL | Build exit 0; 14 ABCI unit tests pass then SEGV abort in protobuf `MergeFromImpl` via `abci_codec.cpp:705` during CometBFT integration (`==ABORTING`, exit 1). Same defect class as prior ASan abort (VDEF-b85bc4a-002). |
+| UndefinedBehaviorSanitizer | `asan` preset (combined) | PARTIAL | Combined with ASan in preset; same CometBFT abort issue (VDEF-b85bc4a-002). |
+| ThreadSanitizer | `tsan` preset | PASS | Build exit 0; 343 passed, 0 failed, 343 registered, exit 0; no ThreadSanitizer warnings. Includes cometbft_single_node_genesis_and_commit and cometbft_multi_node_genesis_agreement (no port contention when run in isolation). |
 | MemorySanitizer | Not configured | NOT_RUN | Not in CMakePresets.json |
 
 ---
@@ -202,25 +251,22 @@ Per AGENTS.md and project plan cross-cutting requirements:
 2. **Unit tests** — exercise individual components in isolation (exist for FST-REQ-0020..0027).
 3. **Integration tests** — exercise multi-component flows (PARTIALLY_VERIFIED for 0020..0027; NOT_TESTED for 0028..0029).
 4. **Failure-injection tests** — exercise error paths, resource exhaustion, malicious inputs (PARTIALLY_VERIFIED for 0021..0025, 0027; NOT_TESTED for 0026, 0028, 0029).
-5. **Build configurations** — debug, release, asan (all PASS for existing tests).
-6. **Sanitizer configurations** — ASan+UBSan (PASS); TSan, MSan not configured.
+5. **Build configurations** — debug, release, asan, tsan build with exit 0 at `b85bc4a`; clang-release build FAILS (exit 1, `-Wsign-conversion` at `fst_application.cpp:213` under `-Werror`). Gate "all five presets build exit 0" NOT met.
+6. **Sanitizer configurations** — ASan+UBSan build exit 0 but CometBFT integration aborts with ASan SEGV (VDEF-b85bc4a-002); TSan build exit 0, 343/343 pass, no TSan warnings; MSan not configured.
 7. **Actual results recorded** — test binary output captured; no fabricated results.
-8. **Last verified commit** — `23903e8` for all Phase 2 unit tests.
+8. **Last verified commit** — `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (five-preset baseline executed at this exact SHA; debug 343/343 PASS, tsan 343/343 PASS, release 339 passed/4 failed timing, asan abort, clang-release build fail).
 
 ---
 
 ## Next Verification Actions (Priority Order)
 
-1. **Debug configuration fully verified** — 343/343 tests PASS. Async TLS I/O strand-based redesign integrated and coherent across all network session files.
-2. **All 5 build presets compile** — debug, release, asan, clang-release (-Werror clean), tsan.
-3. **Release-mode harness timing failures (FST-BUG-0017)** — deferred to Phase 4 (dedicated debugging). Do not debug during Phase 1/2 per new development priority.
-4. **ASan CometBFT integration abort** — deferred to Phase 4. Do not debug during Phase 1/2.
-5. **Test binary hang after CometBFT tests** (release/clang-release) — deferred to Phase 4.
-6. **Build Byzantine fault and partition/recovery tests** — Start 4 CometBFT validator nodes with 4 FST ABCI applications. Test: Byzantine validator behavior, network partitions, validator restart and catch-up, state synchronization, deterministic app hash agreement across nodes.
-7. **Transaction flow across nodes with UTXO conservation** — Submit transactions through CometBFT, verify UTXO conservation and double-spend rejection across all nodes, verify reproducible app hashes.
-8. **Multi-node stress (100+ nodes)** — Current harness covers 2-3 node topologies; large-scale stress not exercised.
-9. **TSan third-party race mitigation** — 38 pre-existing Boost.Asio 1.92.0 races (FST-BUG-0014/0015) documented with mitigation paths; not FST code defects.
-10. **Demo/benchmark/raft lab verification** — Verify `feinstatic-demo`, `feinstatic_bench`, `feinstatic_raft_lab_prepare`, `feinstatic_raft_lab` targets build and run.
+1. **Unblock clang-release build** — `fst_application.cpp:213` `-Wsign-conversion` (`int64_t`→`uint64_t` in `would_fork(request.height)`) fails under `-Werror` (VDEF-b85bc4a-001, HIGH). File is within `fst-implementation` src/consensus/** reservation (IT-01); hand to Integration Agent → Implementation Agent for fix. Until resolved, the "all five presets build exit 0" gate cannot pass.
+2. **Investigate ASan CometBFT integration abort** — SEGV in protobuf `MergeFromImpl` via `abci_codec.cpp:705` `read_framed_message` (VDEF-b85bc4a-002, HIGH); file within `fst-implementation` reservation. Re-run `./build/asan/feinstatic_tests cometbft` in isolation with symbolized ASan stack; add bounds-checked frame-length read before protobuf parse.
+3. **Release-mode timing failures (FST-BUG-0017 class)** — 4 network harness `receive_next` 30s timeouts at b85bc4a (VDEF-b85bc4a-003, MEDIUM); deferred to Phase 4 dedicated debugging per development priority.
+4. **Re-confirm tsan in isolation** — tsan 343/343 PASS with no warnings at b85bc4a (clean run, no parallel port contention); re-run after any AbciSocketServer lifecycle change to confirm zero TSan warnings.
+5. **Handoff baseline to Integration Agent** — report exact SHA `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe`, per-preset exit codes, and log locations for the integration gate.
+6. **Build Byzantine fault and partition/recovery tests** — 4 CometBFT validator nodes with 4 FST ABCI applications once clang-release build is unblocked.
+7. **Transaction flow across nodes with UTXO conservation; multi-node stress (100+ nodes); demo/benchmark/raft lab verification.**
 
 ---
 
