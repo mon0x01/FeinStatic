@@ -11,6 +11,14 @@
 
 ---
 
+## Charter and role obligations (permanent five-agent model)
+
+This ledger is owned exclusively by the Debugging Agent (fst-debugging). It reproduces, diagnoses and fixes authorized defects only, following the approved project phases and defect priorities. Research is a mandatory gate; defect fixes on unreviewed technology are not undertaken. The common authoritative doctrine is `docs/fst/engineering-charter.md`; this ledger links to it rather than duplicating it. Classification and closure conditions for outstanding matters are in `docs/fst/decisions/decision-closure-roadmap.md`. Security and reliability gates, exact-SHA handoffs, future-phase compatibility, and owner-versus-delegated decision boundaries are defined in the charter.
+
+This agent writes only `docs/fst/operations/defect-register.md`. It never edits the implementation, integration, verification, or research ledgers.
+
+---
+
 ## Defect Entries
 
 ### FST-BUG-0014: Boost.Asio socket_ops::close cross-thread race (TSan)
