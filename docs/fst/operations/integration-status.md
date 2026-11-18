@@ -4,7 +4,7 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
-- Baseline commit SHA: `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` (HEAD of `team/integration`; prior baseline `6f8fa522adae39a7909bf7a426563b1bc77867dc` is an ancestor, verified)
+- Baseline commit SHA: `a89ccd8` (HEAD of `team/integration`; merge of `bdb07fd` fst-debugging FST-BUG-0014/0015 fix; prior baseline `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` is an ancestor, verified)
 - Integration worktree: `/home/monil/Desktop/CXX/FeinStatic-agents/integration`
 - Setup commit SHA: `e45824f54f607b73c79c1d49f71c23c0541bd6a0` (setup(fst): add four custom Kilo agents and integration-status ledger)
 
@@ -42,12 +42,12 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 ## Incoming branch/commit handoffs
 | Source branch | Commit SHA | From agent | Intended target | Status | Received at |
 |---------------|------------|------------|-----------------|--------|-------------|
-| team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | GATE_PASSED | 2026-11-18T19:31:45Z |
+| team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T19:31:45Z |
 
 ## Integration and review status
-- Last integrated commit: `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` (HEAD of `team/integration`; includes orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of prior baseline `6f8fa522`)
-- Last review: `bdb07fd` — Verification Agent gate PASSED (debug 343/343 exit 0; tsan harness 29/29 zero race reports; all 5 presets build exit 0; logs /tmp/kilo/verify-bdb07fd-*-{configure,build,tests}.log)
-- Pending review: none — `bdb07fd` cleared for integration
+- Last integrated commit: `a89ccd8` (merge commit merging `bdb07fd` fst-debugging FST-BUG-0014/0015 fix into `team/integration`; HEAD advances from `4c5e088` → `a89ccd8`)
+- Last review: `bdb07fd` — Verification Agent gate PASSED; integrated via merge commit `a89ccd8`
+- Pending review: none
 
 ## Verification Gate Evidence — Commit bdb07fd
 
@@ -72,8 +72,8 @@ Gate evaluation (all required): all 5 presets build exit 0 = YES; TSan harness 2
 
 ## Accepted integration commit SHAs
 - `6f8fa522adae39a7909bf7a426563b1bc77867dc` — prior integration baseline (accepted as starting point)
-- `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` — current HEAD of `team/integration` (accepted; orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of `6f8fa522`)
-- `bdb07fd482fc2094487fa1407f33e1397973dc99` — accepted (fst-debugging FST-BUG-0014/0015 fix, Verification Gate PASSED, to be merged into `team/integration`)
+- `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` — orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of `6f8fa522`
+- `bdb07fd482fc2094487fa1407f33e1397973dc99` — accepted and integrated (fst-debugging FST-BUG-0014/0015 fix; Verification Gate PASSED; merged via merge commit `a89ccd8`)
 
 ## Outstanding blockers
 - (none for Phases 3–4 — unblocked by owner decisions D-015/D-016/D-017/D-037 APPROVED via ADR-0002/0003/0004/0005)
