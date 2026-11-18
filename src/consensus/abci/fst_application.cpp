@@ -207,6 +207,15 @@ ResponseFinalizeBlock FstAbciApplication::finalize_block(
     const RequestFinalizeBlock& request) {
     ResponseFinalizeBlock response;
 
+    // Fork detection: a block at or below the CometBFT-finalized height is a
+    // stale or conflicting block. CometBFT remains authoritative for the
+    // canonical chain; this is defense-in-depth application-level tracking.
+    if (finality_checker_.would_fork(request.height)) {
+        ResponseFinalizeBlock::Event ev;
+        ev.type = "fork_detected";
+        response.events.push_back(std::move(ev));
+    }
+
     height_ = static_cast<staking::Height>(request.height);
 
     // Apply each transaction in the block (v0.40.0: no DeliverTx).
@@ -338,6 +347,11 @@ ResponseFinalizeBlock FstAbciApplication::finalize_block(
     emit_event("priority_fees", std::to_string(block_priority_fees_));
     emit_event("validator_reward", std::to_string(validator_reward));
 
+    // Record the deterministic state commitment as the app hash (CometBFT
+    // returns this in the block header; v0.40.0: app_hash from FinalizeBlock).
+    response.app_hash = compute_app_hash();
+    last_app_hash_ = response.app_hash;
+
     return response;
 }
 
@@ -345,6 +359,13 @@ ResponseCommit FstAbciApplication::commit(const RequestCommit& /*request*/) {
     ResponseCommit response;
 
     response.retain_height = static_cast<std::int64_t>(height_);
+
+    // Record the CometBFT-finalized checkpoint. If this commit conflicts with
+    // an existing finalized checkpoint, a fork is detected; the application
+    // tracks it but CometBFT remains authoritative for fork resolution.
+    const bool fork_detected =
+        !finality_checker_.record_commit(static_cast<std::uint64_t>(height_), last_app_hash_);
+    (void)fork_detected;
 
     cleanup_mempool();
 
@@ -426,6 +447,14 @@ ChainId FstAbciApplication::chain_id() const noexcept {
 
 staking::Height FstAbciApplication::height() const noexcept {
     return height_;
+}
+
+std::uint64_t FstAbciApplication::finalized_height() const noexcept {
+    return finality_checker_.finalized_height();
+}
+
+FinalityStatus FstAbciApplication::finality_status(std::uint64_t height) const noexcept {
+    return finality_checker_.finality_status(height);
 }
 
 Transaction FstAbciApplication::decode_tx(
