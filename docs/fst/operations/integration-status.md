@@ -4,7 +4,7 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
-- Baseline commit SHA: `6f8fa522adae39a7909bf7a426563b1bc77867dc` (HEAD of `team/integration`, verified against required baseline `6f8fa522adae39a7909bf7a426563b1bc77867dc`)
+- Baseline commit SHA: `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` (HEAD of `team/integration`; prior baseline `6f8fa522adae39a7909bf7a426563b1bc77867dc` is an ancestor, verified)
 - Integration worktree: `/home/monil/Desktop/CXX/FeinStatic-agents/integration`
 - Setup commit SHA: `e45824f54f607b73c79c1d49f71c23c0541bd6a0` (setup(fst): add four custom Kilo agents and integration-status ledger)
 
@@ -22,7 +22,9 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 | File/path | Reserved for | Reserved by | Active task | Since |
 |-----------|--------------|-------------|-------------|-------|
 | include/feinstat/consensus/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
-| src/consensus/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
+| src/consensus/** (excluding abci/abci_codec.cpp and abci/abci_socket_server.cpp) | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
+| src/consensus/abci/abci_codec.cpp | VDEF-2026-11-18-001 fix | `fst-debugging` | VDEF fix (IN_PROGRESS) | 2026-11-18 |
+| src/consensus/abci/abci_socket_server.cpp | VDEF-2026-11-18-002 fix | `fst-debugging` | VDEF fix (IN_PROGRESS) | 2026-11-18 |
 | include/feinstat/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
 | src/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
 | include/feinstat/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (IN_PROGRESS) | 2026-11-18 |
@@ -40,12 +42,12 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 ## Incoming branch/commit handoffs
 | Source branch | Commit SHA | From agent | Intended target | Status | Received at |
 |---------------|------------|------------|-----------------|--------|-------------|
-| (none yet) | - | - | - | - | - |
+| team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | GATE_PENDING | 2026-11-18T19:31:45Z |
 
 ## Integration and review status
-- Last integrated commit: `6f8fa522adae39a7909bf7a426563b1bc77867dc` (integration baseline; no feature work integrated yet beyond baseline)
+- Last integrated commit: `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` (HEAD of `team/integration`; includes orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of prior baseline `6f8fa522`)
 - Last review: (none)
-- Pending review: (none — awaiting first implementation handoff)
+- Pending review: `bdb07fd` (fst-debugging FST-BUG-0014/0015 fix; src/network/peer_admission.cpp) — Verification Agent gate pending
 
 ## Build and verification gates
 - Build presets: `debug`, `release`, `asan`, `clang-release`, `tsan` (CMakePresets.json)
@@ -54,10 +56,14 @@ This ledger is owned exclusively by the Integration Agent (fst-integration). No 
 - Regression gate: not yet run (full unit + integration suite on each accepted integration commit)
 
 ## Accepted integration commit SHAs
-- `6f8fa522adae39a7909bf7a426563b1bc77867dc` — integration baseline (accepted as starting point; no feature work integrated yet)
+- `6f8fa522adae39a7909bf7a426563b1bc77867dc` — prior integration baseline (accepted as starting point)
+- `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` — current HEAD of `team/integration` (accepted; orchestration commits 278fb5b, 501a97d, 8d0ca38, 4c5e088 on top of `6f8fa522`)
 
 ## Outstanding blockers
-- (none yet) — Phases 3–4 unblocked by owner decisions D-015/D-016/D-017/D-037 (APPROVED via ADR-0002/0003/0004/0005)
+- (none for Phases 3–4 — unblocked by owner decisions D-015/D-016/D-017/D-037 APPROVED via ADR-0002/0003/0004/0005)
+- VDEF-2026-11-18-001: ASan SEGV in ABCI framing (`src/consensus/abci/abci_codec.cpp:674`, read_framed_message → protobuf MergeFromImpl), HIGH, reported by fst-verification at SHA `6f8fa52` (preset asan, exit 1, log /tmp/kilo/verify-asan-tests.log). Required action: fst-debugging to register as FST-BUG-XXXX and fix. Reservation conflict: `src/consensus/abci/*` reserved for fst-implementation IT-01 (IN_PROGRESS); `abci_codec.cpp` and `abci_socket_server.cpp` reassigned to fst-debugging for this fix.
+- VDEF-2026-11-18-002: TSan data races in `src/consensus/abci/abci_socket_server.cpp:270/:273` (AbciSocketServer stop()/run() racing run() thread), MEDIUM, reported by fst-verification at SHA `6f8fa52` (preset tsan, exit 66, log /tmp/kilo/verify-tsan-tests.log). Required action: fst-debugging to register as FST-BUG-XXXX and fix. Same reservation conflict as VDEF-001.
+- FST-BUG-0017 (Release-mode timing failures) remains OPEN and DEFERRED to Phase 4.
 
 ## Git synchronization protocol (ledger + accepted-commit propagation)
 
