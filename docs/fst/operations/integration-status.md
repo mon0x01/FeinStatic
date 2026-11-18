@@ -14,9 +14,10 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
-- Baseline commit SHA: `a89ccd8` (HEAD of `team/integration`; merge of `bdb07fd` fst-debugging FST-BUG-0014/0015 fix; prior baseline `4c5e0880478c4e33eae9ae00cd9fe84ac420b0df` is an ancestor, verified)
+- Baseline commit SHA: `4521a3bb47b533ca5d021163b20a4df23a18196e` (HEAD of `team/integration`; prior ledger baseline `a89ccd8` is an ancestor, 9 commits behind — commits `ff64364..4521a3b`: technology/dependency acceptance policy extension and five-agent migration SHAs table)
 - Integration worktree: `/home/monil/Desktop/CXX/FeinStatic-agents/integration`
 - Setup commit SHA: `e45824f54f607b73c79c1d49f71c23c0541bd6a0` (setup(fst): add four custom Kilo agents and integration-status ledger)
+- External handoff commits present in `team/integration` history: `bdb07fd` (debugging FST-BUG-0014/0015 fix, merged), `f360985` (implementation FST-REQ-0036 FinalityChecker, merged), `5e1c145` (debugging VDEF-001/VDEF-002 fixes, merged), `c573ef9` (implementation docs-only reconciliation, present as ancestor). `2e4fb66` (verification gate evidence for `0773794`) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs).
 
 ## Active tasks and assigned agents
 | Task | Assigned agent | Branch | Worktree | Status |
@@ -31,25 +32,18 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 | RS-01 | Five-agent migration and research agent setup — fst-research agent definition, research-status ledger, engineering charter, decision closure roadmap, team/research worktree, five-agent controller extension, AGENTS.md sync, read-only research pilot | `fst-research` | `team/research` | `/home/monil/Desktop/CXX/FeinStatic-agents/research` | IN_PROGRESS |
 
 ## Source-file ownership reservations
+
+Completed reservations (IT-01 Phase 3 files: consensus/**, staking/**, monetary/**, tests/abci_tests.cpp, tests/cometbft_integration_tests.cpp; VDEF abci_codec.cpp and abci_socket_server.cpp) have been cleared and removed from this table. Remaining reservations are held for DT-01/DT-02/DT-03, which are DEFERRED to Phase 4 per the project plan (FST-BUG-0013/0014/0015/0017 deferred).
+
 | File/path | Reserved for | Reserved by | Active task | Since |
 |-----------|--------------|-------------|-------------|-------|
-| include/feinstat/consensus/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| src/consensus/** (excluding abci/abci_codec.cpp and abci/abci_socket_server.cpp) | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| src/consensus/abci/abci_codec.cpp | VDEF-2026-11-18-001 fix | `fst-debugging` | VDEF fix (COMPLETE — reservation cleared) | 2026-11-18 |
-| src/consensus/abci/abci_socket_server.cpp | VDEF-2026-11-18-002 fix | `fst-debugging` | VDEF fix (COMPLETE — reservation cleared) | 2026-11-18 |
-| include/feinstat/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| src/staking/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| include/feinstat/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| src/monetary/** | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| tests/abci_tests.cpp | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| tests/cometbft_integration_tests.cpp | Phase 3 completion (IT-01) | `fst-implementation` | IT-01 (COMPLETE — reservation cleared) | 2026-11-18 |
-| tests/network_harness_tests.cpp | Defect FST-BUG-0017 (DT-01) | `fst-debugging` | DT-01 (DEFERRED) | 2026-11-18 |
-| tests/network_harness.cpp | Defect FST-BUG-0017 (DT-01) | `fst-debugging` | DT-01 (DEFERRED) | 2026-11-18 |
-| src/network/secure_session.cpp | Defects FST-BUG-0013 / FST-BUG-0014 / FST-BUG-0015 (DT-02 / DT-03) | `fst-debugging` | DT-02 / DT-03 (DEFERRED) | 2026-11-18 |
-| include/feinstat/network/secure_session.hpp | Defect FST-BUG-0013 (DT-03) | `fst-debugging` | DT-03 (DEFERRED) | 2026-11-18 |
-| tests/temp_handshake_test.cpp | Defect FST-BUG-0013 (DT-03) | `fst-debugging` | DT-03 (DEFERRED) | 2026-11-18 |
-| src/network/network_runtime.cpp | Defects FST-BUG-0014 / FST-BUG-0015 (DT-02) | `fst-debugging` | DT-02 (DEFERRED) | 2026-11-18 |
-| docs/fst/operations/defect-register.md | Defect tracking (all DT tasks) | `fst-debugging` | DT-01 / DT-02 / DT-03 (DEFERRED) | 2026-11-18 |
+| tests/network_harness_tests.cpp | Defect FST-BUG-0017 (DT-01) | `fst-debugging` | DT-01 (DEFERRED to Phase 4) | 2026-11-18 |
+| tests/network_harness.cpp | Defect FST-BUG-0017 (DT-01) | `fst-debugging` | DT-01 (DEFERRED to Phase 4) | 2026-11-18 |
+| src/network/secure_session.cpp | Defects FST-BUG-0013 / FST-BUG-0014 / FST-BUG-0015 (DT-02 / DT-03) | `fst-debugging` | DT-02 / DT-03 (DEFERRED to Phase 4) | 2026-11-18 |
+| include/feinstat/network/secure_session.hpp | Defect FST-BUG-0013 (DT-03) | `fst-debugging` | DT-03 (DEFERRED to Phase 4) | 2026-11-18 |
+| tests/temp_handshake_test.cpp | Defect FST-BUG-0013 (DT-03) | `fst-debugging` | DT-03 (DEFERRED to Phase 4) | 2026-11-18 |
+| src/network/network_runtime.cpp | Defects FST-BUG-0014 / FST-BUG-0015 (DT-02) | `fst-debugging` | DT-02 (DEFERRED to Phase 4) | 2026-11-18 |
+| docs/fst/operations/defect-register.md | Defect tracking (all DT tasks) | `fst-debugging` | DT-01 / DT-02 / DT-03 (DEFERRED to Phase 4) | 2026-11-18 |
 
 ## Incoming branch/commit handoffs
 | Source branch | Commit SHA | From agent | Intended target | Status | Received at |
@@ -65,8 +59,8 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 - Last review: `5e1c14583d46096ad309a3a2149a42bc3dfc4be2` — Verification Agent gate PASSED (debug: configure=0, build=0, tests=0, 343 passed, 0 failed; TSan: configure=0, build=0, tests=0, 3 passed, 0 failed, zero TSan reports); integrated via history-preserving merge
 - Pending review: none
 - Pending handoffs (documentation-only ledger reconciliations, no source to merge into team/integration — acknowledged, no merge required):
-  - `c573ef99dc2351972d447842d1bfcc93668caefa` (fst-implementation, team/implementation) — FST-REQ-0036..0044 audit + implementation-status.md reconciliation. RECEIVED; no build gate required (docs-only); no source to integrate.
-  - `2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e` (fst-verification, detached at 0773794) — verification gate evidence for commit `077379458ed1847d704af89a7a5ae5520cfee42d`. RECEIVED; gate PASSED; no source to integrate.
+  - `c573ef99dc2351972d447842d1bfcc93668caefa` (fst-implementation, team/implementation) — FST-REQ-0036..0044 audit + implementation-status.md reconciliation. Status: PRESENT (already an ancestor of `team/integration` HEAD `4521a3b`; docs-only, no merge required). No build gate required (docs-only); no source to integrate.
+  - `2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e` (fst-verification, detached at 0773794) — verification gate evidence for commit `077379458ed1847d704af89a7a5ae5520cfee42d`. Status: RECEIVED, docs-only; NOT yet in `team/integration` history — no merge required per policy; gate evidence retained on `team/verification`. Gate PASSED (debug 343/343; TSan handshake + harness clean).
 
 ## Verification Gate Evidence — Commit bdb07fd
 
@@ -154,7 +148,7 @@ All five worktrees are linked worktrees of the repo at `/home/monil/Desktop/CXX/
 1. Each agent commits only on its own `team/*` branch in its own worktree. Never commit directly to `main`.
 2. No destructive Git operations: no force-push, no history rewrite, no destructive resets. No broad staging: no `git add .` / `git add -A`; stage only explicitly reviewed paths.
 3. Before depending on another agent's work, confirm the exact commit SHA is present (`git log <branch> | grep <SHA>` or `git cat-file -t <SHA>`).
-4. Baseline: `6f8fa522adae39a7909bf7a426563b1bc77867dc` is the common starting point. All `team/*` branches currently point at `501a97dc16abd4506c85055d1698a5d5472a618e` (which includes the baseline). New accepted integration commits advance `team/integration` only.
+4. Baseline: `6f8fa522adae39a7909bf7a426563b1bc77867dc` is the common starting point. `team/integration` currently points at `4521a3bb47b533ca5d021163b20a4df23a18196e` (which includes the baseline). Other `team/*` branches point at their respective migration/setup SHAs (see Five-agent migration SHAs table). New accepted integration commits advance `team/integration` only.
 
 ### Handoff flow (implementation / debugging → integration)
 1. Producing agent (`fst-implementation` or `fst-debugging`) completes reviewed work, commits it on its `team/*` branch, and reports the handoff to the Integration Agent with: source branch, exact commit SHA, from agent, receiving agent (`fst-integration`), intended target (`team/integration`), status.
