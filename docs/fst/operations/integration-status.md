@@ -359,16 +359,27 @@ The user explicitly authorizes periodic publishing of FST development branches t
 
 | Branch | Local SHA | Remote SHA | Status | Upstream tracking |
 |--------|-----------|------------|--------|-------------------|
-| `team/integration` | `7276d407a60f56e4954c302f89b4b6a0740b1ae5` | `7276d407a60f56e4954c302f89b4b6a0740b1ae5` | PUBLISHED | origin/team/integration |
-| `team/implementation` | `0721816b1e73da81d5ec93204a31668f265cb7c4` | `0721816b1e73da81d5ec93204a31668f265cb7c4` | PUBLISHED | origin/team/implementation |
-| `team/verification` | `f7ac5ff53a189c21fd56d491fb391995aa88e3ad` | `f7ac5ff53a189c21fd56d491fb391995aa88e3ad` | PUBLISHED | origin/team/verification |
+| `team/integration` | `f5dbba5` | `f5dbba5` | PUBLISHED | origin/team/integration |
+| `team/implementation` | `8b4ea201c1fd369b0aa40572f74436567b711630` | `8b4ea201c1fd369b0aa40572f74436567b711630` | PUBLISHED | origin/team/implementation |
+| `team/verification` | `d1d9d2ad8dd6ecec10df81d376f5d7d800749430` | `d1d9d2ad8dd6ecec10df81d376f5d7d800749430` | PUBLISHED | origin/team/verification |
 | `team/debugging` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | PUBLISHED | origin/team/debugging |
 | `team/research` | `9f72f8e3979f5359ad178f243f8b42f690b83b8b` | `9f72f8e3979f5359ad178f243f8b42f690b83b8b` | PUBLISHED | origin/team/research |
 
-Note: `team/verification` local ref `f7ac5ff` does not include the detached verification evidence commits `5d0d74b` (b85bc4a baseline) and `7b22760` (928ea7b results). These commits exist in the object store but are not reachable from the `team/verification` branch ref. They were pushed as part of `team/integration`'s history via the merge commit `928ea7b`. The verification agent should reconcile `team/verification` to include these commits on its next cycle.
+Note: `team/verification` has been reconciled — commit `d1d9d2a` (cherry-pick of `7b22760`, five-preset verification results at integration HEAD `928ea7b`, gate PASSED) is now on the branch and pushed to origin. The earlier baseline commit `5d0d74b` (verification at `b85bc4a`, gate NOT PASSED) could not be cherry-picked due to content conflicts on `verification-status.md`; its evidence is preserved in the git object store and reachable from `team/integration` via merge commit `928ea7b`.
 
 ### Controller command
 
 `fst-team push [branch]` — publishes team/* branch(es) to origin. Default target is `all` (all five branches). Validates ancestry, confirms remote reachability, performs ordinary fast-forward push, reports push summary.
+
+### Automatic publishing triggers
+
+The `fst-team` controller automatically publishes after successful committed tasks:
+
+1. **After specialist task completion:** `cmd_collect` calls `auto_push_after_collect()` when a task completes with exit code 0 and produces a commit SHA that is present on the agent's team/* branch (exact-SHA validation). The agent's branch is pushed to origin via ordinary fast-forward push.
+
+2. **After integration cycle completion:** The Integration Agent manually runs `fst-team push team/integration` after completing a verified integration cycle and committing its ledger.
+
+3. **Safety:** Automatic publishing only occurs after commit completion and exact-SHA validation. Uncommitted files are never published. Workers are not pushed while still active (push triggered by collect, not dispatch). Failed gates to team/integration are not pushed (Integration Agent controls when to push team/integration).
+
 
 
