@@ -269,6 +269,7 @@ Runtime state is stored outside Git at `~/.local/state/fst-team/` (never committ
 | `resume` | `fst-team resume <session_id> [msg]` | Resume an existing Kilo session by ID with a new message |
 | `sync` | `fst-team sync` | Inspect all four worktrees; read ledgers from branch refs via `git show` |
 | `stop` | `fst-team stop <session_id>` | Stop a running session |
+| `push` | `fst-team push [branch]` | Publish team/* branch(es) to origin (fast-forward only, never main) |
 | `doctor` | `fst-team doctor` | Health check: Kilo CLI, agent definitions, worktrees, state |
 
 Agents: `fst-research`, `fst-implementation`, `fst-verification`, `fst-debugging`. Coordination: `fst-integration`.
@@ -328,4 +329,46 @@ This behavior is permanent and occurs automatically, not only on request.
   or override the Phase 4 debugging priority (FST-BUG-0013/0014/0015/0017
   deferred to Phase 4 unless the user explicitly changes priority).
 - The desired operating model is four simultaneously working specialist agents (research, implementation, verification, debugging), continuously coordinated by Integration, with the owner providing only `continue` and `stop` commands.
+
+## Permanent GitHub Publication Policy
+
+### Policy statement
+
+The user explicitly authorizes periodic publishing of FST development branches to the existing GitHub origin repository (`https://github.com/mon0x01/FeinStatic.git`). All five `team/*` branches are published to their corresponding `origin/team/*` branches. `main` is NEVER published to automatically — it remains exclusively under owner-controlled release management.
+
+### Automatic branch publishing rules
+
+1. **Push after completed checkpoints:** Push committed changes on each `team/*` branch after a completed agent task or meaningful committed checkpoint. Push `team/integration` after each completed integration cycle and ledger update.
+2. **Publish verification evidence:** Verification evidence and failed-test records are published too, with their actual verification status clearly documented in the ledgers.
+3. **Fast-forward only:** Use ordinary `git push` (no `--force`, no `--force-with-lease`, no `--delete`). Never rewrite published history.
+4. **No main:** Never push directly to `main`. Never merge into `main` automatically.
+5. **No uncommitted changes:** Never push uncommitted changes. Only committed SHAs are published.
+6. **No broad staging:** Never use `git add .` or `git add -A`. Stage only explicitly reviewed paths.
+7. **Pre-push inspection:** Before every push, inspect remote refs (`git ls-remote origin`) and confirm branch ancestry. Local must be a descendant of remote (fast-forward possible). If diverged, stop and report — never force-push.
+8. **Rejected push handling:** If a push is rejected or encounters unexpected remote divergence, stop and report the problem. Never resolve it using force-push.
+9. **Upstream tracking:** Establish safe upstream tracking (`git branch --set-upstream-to=origin/team/*`) for each published branch.
+
+### Integration requirements
+
+1. **Publish accepted integration commits:** Publish `team/integration` only after the Verification Agent's gate passes (exact SHA, build preset, command, exit code, log location) AND the Technology and Dependency Acceptance Policy gate passes.
+2. **Feature branch publication:** Feature branches may be published before integration so their progress is backed up and available for review.
+3. **Status clarity:** Clearly distinguish RECEIVED, VERIFIED, INTEGRATED and REJECTED work in the ledgers.
+4. **SHA recording:** Record published commit SHAs and remote branch references in the integration ledger.
+
+### Published branches (as of this cycle)
+
+| Branch | Local SHA | Remote SHA | Status | Upstream tracking |
+|--------|-----------|------------|--------|-------------------|
+| `team/integration` | `7276d407a60f56e4954c302f89b4b6a0740b1ae5` | `7276d407a60f56e4954c302f89b4b6a0740b1ae5` | PUBLISHED | origin/team/integration |
+| `team/implementation` | `0721816b1e73da81d5ec93204a31668f265cb7c4` | `0721816b1e73da81d5ec93204a31668f265cb7c4` | PUBLISHED | origin/team/implementation |
+| `team/verification` | `f7ac5ff53a189c21fd56d491fb391995aa88e3ad` | `f7ac5ff53a189c21fd56d491fb391995aa88e3ad` | PUBLISHED | origin/team/verification |
+| `team/debugging` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | PUBLISHED | origin/team/debugging |
+| `team/research` | `9f72f8e3979f5359ad178f243f8b42f690b83b8b` | `9f72f8e3979f5359ad178f243f8b42f690b83b8b` | PUBLISHED | origin/team/research |
+
+Note: `team/verification` local ref `f7ac5ff` does not include the detached verification evidence commits `5d0d74b` (b85bc4a baseline) and `7b22760` (928ea7b results). These commits exist in the object store but are not reachable from the `team/verification` branch ref. They were pushed as part of `team/integration`'s history via the merge commit `928ea7b`. The verification agent should reconcile `team/verification` to include these commits on its next cycle.
+
+### Controller command
+
+`fst-team push [branch]` — publishes team/* branch(es) to origin. Default target is `all` (all five branches). Validates ancestry, confirms remote reachability, performs ordinary fast-forward push, reports push summary.
+
 
