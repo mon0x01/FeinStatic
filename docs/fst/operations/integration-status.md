@@ -59,7 +59,7 @@ Completed reservations (IT-01 Phase 3 files: consensus/**, staking/**, monetary/
 | team/implementation | f360985e98dd882556cc9e6b531ed2b4099ac727 | fst-implementation | team/integration | INTEGRATED | 2026-11-18T20:xx:00Z |
 | team/debugging | 5e1c14583d46096ad309a3a2149a42bc3dfc4be2 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T20:xx:00Z |
 | team/debugging | ad9bf01ac05ca1a1b70a1e8a9821b7f2a2ed5504 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T02:10:31Z |
-| team/implementation | 8b4ea201c1fd369b0aa40572f74436567b711630 | fst-implementation | team/integration | RECEIVED | 2026-11-19T00:00:00Z |
+| team/implementation | 8b4ea201c1fd369b0aa40572f74436567b711630 | fst-implementation | team/integration | INTEGRATED | 2026-11-19T00:00:00Z |
 | team/verification | 0f55970937522c5c04c974584baa86d8ff6d6172 | fst-verification | team/integration | RECEIVED | 2026-11-18T00:04:14Z |
 | team/verification | 7b22760 | fst-verification | team/integration | RECEIVED | 2026-11-18T23:xx:00Z |
 
