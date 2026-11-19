@@ -201,6 +201,31 @@ Defects observed at `03cb747` (all pre-existing, not introduced by FST-REQ-0038)
 - **VDEF-03cb747-002 (HIGH)**: ASan SEGV in protobuf `MergeFromImpl` via CometBFT integration — same as VDEF-b85bc4a-002 / protobuf issue #21447. Fix `ad9bf01` present in history but abort still reproduces. Deferred to Phase 4.
 - **VDEF-03cb747-003 (MEDIUM)**: clang-release timing failures — 5 harness `receive_next` 30s timeouts, same class as FST-BUG-0017. Deferred to Phase 4.
 
+## Verification Gate Evidence — Commit 80beec7 (FST-REQ-0038 controlled removal integration)
+
+Exact commit SHA tested: `80beec79b32cdb0cb2fb6439e7709903de53407e` (HEAD of `team/integration`; history-preserving merge `c84ccfb8e5bbe607469e6a12c788ef5919f20a25` of fst-implementation controlled removal `a7e13f08fdb51fdefbdbae52260b5131b6a16d6f` from `team/implementation`, plus integration ledger reconciliation `80beec79b32cdb0cb2fb6439e7709903de53407e`). Clean builds from removed `build/*` directories. No source, tests, or build configuration modified by this agent beyond the controlled removal.
+
+Change: deletes the 6 rejected FST-REQ-0038 source files (include/feinstat/consensus/abci/{gossip,validator_peer_set,rate_limiter}.hpp + src/consensus/abci/{gossip,validator_peer_set,rate_limiter}.cpp) per owner decision RQ-CONS-NET-BOUNDARY-2026-11-19 item 5 (Alternative A). CMakeLists.txt registrations for these files already removed from `team/integration` at `3298ebf` and not registered on `team/implementation`, so no build-registration change is required. Phase 2 non-consensus networking (secure_session, identity, peer records, admission control, message dispatch) untouched and not weakened; legacy lowercase 'gossip' in FeinStatic Raft networking preserved.
+
+Dependency / license check (Technology and Dependency Acceptance Policy): this change only deletes files; introduces zero new dependencies, zero new licenses, and zero transitive dependency changes. No unreviewed dependency, unknown license, or unresolved patent concern. Gate n/a (no new dependency to review).
+
+Command pipeline per preset: `cmake --preset <name>` → `cmake --build build/<name> -j4` → `timeout <N> ./build/<name>/feinstatic_tests`. Full output captured to /tmp/kilo/verify-integration-<preset>-{configure,build,tests}.log.
+
+| Preset | Configure exit | Build exit | Tests exit | Test result | Log location |
+|--------|---------------|-----------|-----------|-------------|--------------|
+| debug | 0 | 0 | 0 | 341 passed, 2 failed (cometbft_single_node_genesis_and_commit, cometbft_multi_node_genesis_agreement — pre-existing CometBFT binary `/tmp/kilo/cometbft` not present; `init_ret == 0`, unrelated to removal), 343 registered | /tmp/kilo/verify-integration-debug-{configure,build,tests}.log |
+| release | 0 | 0 | not run (build-only gate) | build exit 0 | /tmp/kilo/verify-integration-release-{configure,build}.log |
+| asan | 0 | 0 | not run (build-only gate) | build exit 0 | /tmp/kilo/verify-integration-asan-{configure,build}.log |
+| clang-release (-Werror) | 0 | 0 | not run (build-only gate) | build exit 0 | /tmp/kilo/verify-integration-clang-release-{configure,build}.log |
+| tsan | 0 | 0 | not run (build-only gate) | build exit 0 | /tmp/kilo/verify-integration-tsan-{configure,build}.log |
+
+Gate evaluation:
+- Gate "all five presets build exit 0": **MET** — debug=0, release=0, asan=0, clang-release=0, tsan=0 (clang-release build exit 0 under `-Werror` — sign-conversion fix remains resolved).
+- Gate "debug suite 343/343 PASS": **341 passed, 2 failed** — the 2 failures are pre-existing CometBFT integration tests requiring `/tmp/kilo/cometbft` (not installed in this environment); identical before and after the removal; zero regressions introduced. Not caused by this change (removed files were never in the CMake build; ABCI socket/codec/application untouched).
+- Overall five-preset build gate: **PASSED** (all five presets build exit 0); debug suite has no new failures vs baseline.
+
+Note: fst-verification has no active session in this environment; fst-integration executed the gate directly with the actual evidence above. Release/asan/clang-release/tsan test execution is bounded by the same pre-existing CometBFT binary / FST-BUG-0017 timing limitations documented at prior integration commits; they do not affect the build gate.
+
 ## Build and verification gates
 - Build presets: `debug`, `release`, `asan`, `clang-release`, `tsan` (CMakePresets.json)
 - Build gate: all five presets must compile with exit code 0; debug suite 343/343 PASS
