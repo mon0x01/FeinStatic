@@ -13,6 +13,8 @@
 
 namespace feinstat::consensus::abci {
 
+using feinstat::network::NodeId;
+
 // Validator peer set: tracks the set of validator peers known to this node,
 // their consensus keys, voting power, and health status.
 //
@@ -66,8 +68,20 @@ public:
     // Record a message sent to a peer.
     void message_sent(const NodeId& node_id);
 
-    // Record a rate-limit violation by a peer.
+    // Record a rate-limit violation by a peer. Increments the peer's
+    // violation count; Healthy peers become Suspect on the first violation,
+    // and the peer is Banned once the count reaches the ban threshold
+    // (DoS mitigation; see tick() and kBanViolationThreshold).
     void rate_limit_violation(const NodeId& node_id);
+
+    // Apply automatic health transitions:
+    //   - peers at or above the ban violation threshold become Banned;
+    //   - peers with pending violations become Suspect (Offline if absent);
+    //   - Healthy peers not seen within the offline timeout become Offline.
+    // Banned peers stay banned until explicitly removed or re-added.
+    // Call this periodically (e.g. from the network tick) to drive the
+    // Healthy -> Suspect -> Offline state machine.
+    void tick();
 
     // Mark a peer as the current leader (block proposer). Only one peer may
     // be the leader at a time; calling set_leader() clears the previous leader.

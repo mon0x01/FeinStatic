@@ -11,6 +11,8 @@
 
 namespace feinstat::consensus::abci {
 
+using feinstat::network::NodeId;
+
 // Per-peer token-bucket rate limiter for consensus networking.
 //
 // Each peer maintains an independent token bucket that refills at a
@@ -48,6 +50,14 @@ public:
     // tokens; used when the caller has already decided to accept the
     // message and only wants to update accounting.
     void record(const NodeId& peer, std::size_t message_bytes);
+
+    // Peek at `peer`'s bucket without consuming tokens: returns true if a
+    // message of `message_bytes` would be allowed by allow() right now
+    // (bucket has enough tokens and the message is within the single-message
+    // size limit), false otherwise. No bucket state is modified and no new
+    // bucket is created. An unknown peer is evaluated against a fresh full
+    // bucket.
+    [[nodiscard]] bool peek(const NodeId& peer, std::size_t message_bytes) const;
 
     // Returns the currently available tokens for `peer` (0 if
     // rate-limited or unknown).
