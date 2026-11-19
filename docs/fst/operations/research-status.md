@@ -16,17 +16,17 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 
 | Field | Value |
 |---|---|
-| Current research phase | Pilot — CometBFT consensus candidate investigation (PILOT-COMETBFT-2026-11-18); research-gate portion complete, executable prototype evidence blocked by missing Go 1.25.0 toolchain |
+| Current research phase | Pilot — CometBFT consensus candidate investigation (PILOT-COMETBFT-2026-11-18; complete); protobuf 36.1.0 ABCI MergeFromImpl SEGV investigation (RQ-PROTOBUF-36-SEGV-2026-11-19; report delivered) |
 | Research branch | `team/research` |
 | Research worktree | `/home/monil/Desktop/CXX/FeinStatic-agents/research` |
-| Active research tasks | PILOT-COMETBFT-2026-11-18 (report delivered); RQ-02 executable evidence pending Go toolchain |
-| Technology candidates under evaluation | CometBFT v0.40.0 (see technology candidates table below) |
-| Last research deliverable | `docs/fst/research/pilot-cometbft-consensus-candidate-2026-11-18.md` (commit SHA recorded in deliverables table below) |
-| Last verified commit SHA | None (no executable evidence produced; prototype blocked by Go toolchain) |
-| Prototype/benchmark evidence | None (Go 1.25.0 not installed; prerequisite, not an architectural blocker) |
+| Active research tasks | PILOT-COMETBFT-2026-11-18 (report delivered); RQ-02 executable evidence pending Go toolchain; RQ-PROTOBUF-36-SEGV-2026-11-19 (report delivered, owner decision pending) |
+| Technology candidates under evaluation | CometBFT v0.40.0; protobuf 36.1.0 (see technology candidates table below) |
+| Last research deliverable | `docs/fst/research/pilot-cometbft-consensus-candidate-2026-11-18.md`; `docs/fst/research/protobuf-36.1-abci-codec-mergefromimpl-segv.md` (commit SHA recorded in deliverables table below) |
+| Last verified commit SHA | None (no executable evidence produced; prototype blocked by Go toolchain for RQ-02) |
+| Prototype/benchmark evidence | None (Go 1.25.0 not installed for RQ-02; prerequisite, not an architectural blocker). Protobuf prototype plan is read-only/local in report §12, not yet executed. |
 | Proposed ADRs awaiting owner decision | ADR-0006 (outline) — CometBFT v0.40.0 as committed consensus engine dependency |
 | Accepted recommendations | None (recommendation proposed, not owner-approved) |
-| Rejected recommendations | Nakamoto PoW/C3; FeinStatic Raft/D-024; CometBFT `main` branch (see pilot report Section 13) |
+| Rejected recommendations | Nakamoto PoW/C3; FeinStatic Raft/D-024; CometBFT `main` branch (see pilot report Section 13); protobuf ≤28.x downgrade and protobuf 36.2 upgrade as fixes for the MergeFromImpl SEGV (see protobuf report §13) |
 | Blocked research | RQ-02 executable prototype/multi-validator evidence — blocked by missing Go 1.25.0 toolchain |
 | Future-phase research roadmap | See `docs/fst/decisions/decision-closure-roadmap.md` (M-03, M-04, M-05, M-06, M-07, M-08, M-10, M-14) |
 
@@ -45,6 +45,7 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 | RQ-07 | Independent client implementation count (D-035, M-08) | Research | OPEN | D-035 OPEN RESEARCH | Phase 5+ |
 | RQ-08 | Cryptographic primitives and key lifecycle (M-10) | Research | DEFERRED-BY-DESIGN | Cryptographic review | Phase 4 |
 | RQ-09 | State synchronization and light-client proofs (M-14) | Research | DEFERRED-BY-DESIGN | Node-roles research | Phase 5 |
+| RQ-PROTOBUF-36-SEGV-2026-11-19 | protobuf 36.1.0 table-dispatch MergeFromImpl SEGV at abci_codec.cpp:705 (valid 21-byte Request.info frame) | Investigation | REPORT-DELIVERED; owner decision pending | RQ-02 (Go toolchain independent); abci_codec.cpp fix ad9bf01 present but insufficient | Phase 3–4 |
 | RT-LICENSE-001 | Root-project license comparison (Apache-2.0, GPL-3.0, MPL-2.0, others) — BLOCKED-ON-OWNER (M-19) | Research | PENDING-OWNER | Policy documented (`docs/fst/policies/technology-and-dependency-acceptance.md` §7); no agent may silently select root license | Phase 2–4 |
 | RT-DEP-002 | Dependency policy automation research (license scanning, SPDX SBOM, allowlist/denylist, provenance, vulnerability scanning) — DEFERRED-BY-DESIGN (M-20) | Research | PENDING | Policy documented; CI controls researched after owner sign-off | Phase 4+ |
 
@@ -55,6 +56,7 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 | Candidate | Domain | Status | Source version / access date | Summary |
 |---|---|---|---|---|
 | CometBFT v0.40.0 | Consensus engine (BFT, deterministic finality) | Under evaluation — APPROVED candidate (D-017/ADR-0004), feasibility-gated; not a committed production dependency | v0.40.0, release 2026-07-27, commit 0880b4d; local spike accessed 2026-11-18 | Leader-based stake-weighted BFT; ABCI++ over local Unix-domain socket; Apache-2.0; Go 1.25.0; all listed advisories patched in v0.40.0 (inference basis for CSA-2026-001); executable prototype blocked by missing Go toolchain |
+| protobuf 36.1.0 | Serialization runtime / ABCI protobuf codegen+lib | Under evaluation — EXISTING dependency, crash-under-investigation | v36.1, release 2026-08-31, commit f377bfe; system-installed libprotobuf.so.36.1.0 + protoc 36.1 verified 2026-11-19 | Table-driven (tail-call) parser; MergeFromImpl/TagDispatch indirect call on data-derived index can SEGV on valid frames when toolchain/ABI inconsistent (upstream #21447/#20482); BSD-3-Clause; no published 36.x parse-table crash fix (36.1/36.2 release notes); FST fix ad9bf01 (slack+length validation) insufficient |
 | HotStuff / C1 composition | Consensus alternative | OPEN RESEARCH fallback | RS-013 (verification date 2026-11-15) | Leader-based BFT, O(n) per view; less mature deployment |
 | Nakamoto PoW / C3 | Consensus alternative | Not viable (D-017 conflict — probabilistic finality) | RS-013 (verification date 2026-11-15) | Probabilistic finality; high energy; slow settlement |
 | Gasper / C5 | Consensus alternative | OPEN RESEARCH fallback | RS-013 / candidate-c5-evaluation (accessed 2026-11-18) | Weak subjectivity (P9 tension); stake concentration; long-range attacks |
@@ -83,6 +85,17 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 | Root `README.md` | FST repository README | internal (local doc) | 2026-11-18 | current tree | fst-research | 2026-12-18 |
 | `CMakePresets.json` | CMake build presets | internal (local file) | 2026-11-18 | version 6 | fst-research | 2026-12-18 |
 | External URLs cited within local sources | github.com/cometbft/cometbft/releases/latest; docs.cometbft.com; pkg.go.dev; arxiv.org papers; GHSA advisories | not fetched (local-source constraint) | 2026-11-18 | as cited in local docs | fst-research | 2026-12-18 |
+| S1 | protobuf v36.1 release notes | https://github.com/protocolbuffers/protobuf/releases/tag/v36.1 | v36.1, commit f377bfe, 2026-08-31 | 2026-11-19 | fst-research | 2026-12-19 |
+| S2 | protobuf v36.2 release notes | https://github.com/protocolbuffers/protobuf/releases/tag/v36.2 | v36.2, commit 2c74169, 2026-09-17 | 2026-11-19 | fst-research | 2026-12-19 |
+| S3 | protobuf v36.0 release notes | https://github.com/protocolbuffers/protobuf/releases/tag/v36.0 | v36.0, commit 3f17acb, 2026-08-20 | 2026-11-19 | fst-research | 2026-12-19 |
+| S4 | protobuf issue #21447 (SEGV in clang, protobuf>=29; TagDispatch/MergeFromImpl crash; build-consistency workaround) | https://github.com/protocolbuffers/protobuf/issues/21447 | 29.x/31.x; created 2025-04-24, closed 2025-06-05 | 2026-11-19 | fst-research | 2026-12-19 |
+| S5 | protobuf issue #20482 (Clang 19 Windows deserialization crash; build-config mismatch) | https://github.com/protocolbuffers/protobuf/issues/20482 | protobuf 5.29.2/5.29.3; 2025-02-26/27 | 2026-11-19 | fst-research | 2026-12-19 |
+| S6 | protobuf generated_message_tctable_impl.h (TagDispatch data-derived indirect call) | https://raw.githubusercontent.com/protocolbuffers/protobuf/v36.1/src/google/protobuf/generated_message_tctable_impl.h | v36.1 | 2026-11-19 | fst-research | 2026-12-19 |
+| S7 | protobuf parse_context.h (kSlopBytes read-past-end contract) | https://github.com/protocolbuffers/protobuf/blob/main/src/google/protobuf/parse_context.h | main (reflects v36.1) | 2026-11-19 | fst-research | 2026-12-19 |
+| S8 | protobuf message_lite.cc (ParseFromArray→MergeFromImpl→ParseLoop) | https://raw.githubusercontent.com/protocolbuffers/protobuf/v36.1/src/google/protobuf/message_lite.cc | v36.1 | 2026-11-19 | fst-research | 2026-12-19 |
+| S9 | Local: src/consensus/abci/abci_codec.cpp line 705 (ParseFromArray/MergeFromImpl SEGV site) | internal (local file) | current tree, HEAD 9f72f8e | 2026-11-19 | fst-research | 2026-12-19 |
+| S10 | Local: integration-status.md (VDEF-001/FST-BUG-0018; ad9bf01; ASan SEGV reproduction at bdb07fd) | internal (local file) | current tree | 2026-11-19 | fst-research | 2026-12-19 |
+| S11 | Local system protobuf | protoc --version = 36.1; libprotobuf.so.36.1.0 at /usr/lib/ | protobuf 36.1 | 2026-11-19 | fst-research | 2026-12-19 |
 
 ---
 
@@ -91,6 +104,7 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 | Deliverable ID | Title | Type | Commit SHA | Date | Owner decision required? |
 |---|---|---|---|---|---|
 | PILOT-COMETBFT-2026-11-18 | CometBFT as the FST consensus candidate (D-017 / M-03) — pilot research report | Research report | <commit SHA to be filled at commit> | 2026-11-18 | Yes (proposed ADR-0006) |
+| RQ-PROTOBUF-36-SEGV-2026-11-19 | protobuf 36.1.0 table-dispatch MergeFromImpl SEGV at abci_codec.cpp:705 — research report | Research report | <commit SHA to be filled at commit> | 2026-11-19 | Yes (build/toolchain change, routed via fst-integration) |
 
 ---
 
@@ -132,6 +146,7 @@ Authoritative references: `docs/fst/engineering-charter.md` (common doctrine), `
 | RT-LICENSE-001 root-project license comparison | Owner decision (M-19 BLOCKED-ON-OWNER) | Owner explicitly selects root-project license; LICENSE file added only with owner authorization | Owner license decision recorded |
 | RT-DEP-002 dependency policy automation | Policy documented; owner sign-off for CI implementation (M-20 DEFERRED-BY-DESIGN) | Research CI controls; implement only after policy accepted | CI gates enforce policy; exceptions not hidden through scanner configuration |
 | CSA-2026-001 inclusion in v0.40.0 tree | Not re-verified by direct source inspection (inference basis only) | Direct inspection of v0.40.0 source tree once Go toolchain available | Fix confirmed in v0.40.0 tree |
+| protobuf 36.1.0 toolchain/ABI consistency (SEGV workaround) | Requires build/experiment execution (read-only prototype plan in report §12) | Confirm compiler/version/flags match between installed libprotobuf.so.36.1.0 and FST TUs; rebuild protobuf+Abseil from source with FST compiler if mismatched | SEGV reproduction/elimination evidence recorded; fst-integration coordinates any toolchain change |
 
 ---
 
