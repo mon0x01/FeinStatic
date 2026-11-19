@@ -214,7 +214,60 @@ test_agent_to_branch() {
 }
 
 # -------------------------------------------------------------------
-# Test 6: auto_push_branch when remote is ahead (no push needed)
+# Test 7: interrupted-push recovery — pushing same SHA again succeeds
+#
+# Simulates recovery from an interrupted push: after a successful push,
+# pushing the same SHA again should succeed (git push is idempotent for
+# fast-forward). This is the recovery path when a push is interrupted
+# mid-transfer and needs to be retried.
+# -------------------------------------------------------------------
+test_interrupted_push_recovery() {
+  echo "Test 7: interrupted-push recovery (retry same SHA)"
+  setup_repo
+
+  cd "$TEST_DIR/worktree"
+  source_test_env
+
+  # First push of team/integration
+  if auto_push_branch "team/integration" "first push"; then
+    pass "First push succeeded"
+  else
+    fail "First push failed"
+    cd - > /dev/null
+    return
+  fi
+
+  # Verify remote SHA matches local
+  local remote_sha
+  remote_sha="$(git ls-remote origin "refs/heads/team/integration" | awk '{print $1}')"
+  local local_sha
+  local_sha="$(git rev-parse team/integration)"
+  if [ "$remote_sha" = "$local_sha" ]; then
+    pass "Remote SHA matches local after first push"
+  else
+    fail "Remote SHA differs from local after first push"
+  fi
+
+  # Simulate interrupted push recovery: push same SHA again
+  if auto_push_branch "team/integration" "retry after interruption"; then
+    pass "Retry after interruption succeeded (push is idempotent)"
+  else
+    fail "Retry after interruption failed"
+  fi
+
+  # Verify remote SHA still matches
+  remote_sha="$(git ls-remote origin "refs/heads/team/integration" | awk '{print $1}')"
+  if [ "$remote_sha" = "$local_sha" ]; then
+    pass "Remote SHA unchanged after retry (no corruption)"
+  else
+    fail "Remote SHA changed after retry"
+  fi
+
+  cd - > /dev/null
+}
+
+# -------------------------------------------------------------------
+# Test 8: auto_push_branch when remote is ahead (no push needed)
 # -------------------------------------------------------------------
 test_remote_ahead() {
   echo "Test 6: auto_push_branch skips when remote is ahead"
@@ -272,6 +325,7 @@ test_new_branch_push
 test_fast_forward_push
 test_reject_main
 test_divergence_rejection
+test_interrupted_push_recovery
 test_remote_ahead
 
 # -------------------------------------------------------------------
