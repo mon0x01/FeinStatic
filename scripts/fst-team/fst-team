@@ -717,6 +717,15 @@ sys.exit(0)
     fi
   fi
 
+  # Automatic publishing: after a successful committed task, push the agent's
+  # team/* branch. Only when the task completed with exit code 0 and produced
+  # a commit SHA that is present on the agent's branch (exact-SHA validation).
+  if [ "$collect_status" = "completed" ] && [ "$exit_code" = "0" ] && [ -n "$shas" ]; then
+    local first_sha
+    first_sha="$(echo "$shas" | head -1)"
+    auto_push_after_collect "$agent" "$first_sha"
+  fi
+
   echo "=== collect complete ==="
 }
 
@@ -792,6 +801,230 @@ cmd_sync() {
 
   echo "=== sync complete ==="
 }
+
+###############################################################################
+# cmd_push — publish team/* branches to origin (permanent GitHub sync)
+###############################################################################
+
+cmd_push() {
+  local target="${1:-all}"
+
+  # Validate target: only team/* branches allowed, never main
+  if [ "$target" != "all" ]; then
+    case "$target" in
+      team/*) ;;
+      *)
+        echo "ERROR: only team/* branches may be published; '$target' is not allowed" >&2
+        echo "       main is excluded from automatic publishing." >&2
+        exit 4
+        ;;
+    esac
+  fi
+
+  echo "=== fst-team push (permanent GitHub synchronization) ==="
+  echo "Remote: origin ($(git remote get-url origin 2>/dev/null))"
+  echo "Target: $target"
+  echo ""
+
+  # Confirm remote is reachable
+  if ! git ls-remote --exit-code origin >/dev/null 2>&1; then
+    echo "ERROR: cannot reach remote 'origin'. Aborting push." >&2
+    exit 4
+  fi
+
+  # List branches to push
+  local branches=()
+  if [ "$target" = "all" ]; then
+    branches=(team/integration team/implementation team/verification team/debugging team/research)
+  else
+    branches=("$target")
+  fi
+
+  local pushed=0 failed=0 skipped=0
+  for branch in "${branches[@]}"; do
+    echo "--- Processing $branch ---"
+
+    # Confirm branch exists locally
+    if ! git rev-parse --verify "$branch" >/dev/null 2>&1; then
+      echo "  SKIP: local branch '$branch' does not exist"
+      skipped=$((skipped + 1))
+      continue
+    fi
+
+    local local_sha remote_sha
+    local_sha="$(git rev-parse "$branch")"
+    remote_sha="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null | awk '{print $1}')"
+
+    if [ -z "$remote_sha" ]; then
+      echo "  NEW: branch '$branch' does not exist on origin; will create it"
+      echo "  Local SHA: $local_sha"
+    else
+      echo "  Local SHA:  $local_sha"
+      echo "  Remote SHA: $remote_sha"
+
+      # Check ancestry: local must be a descendant of remote (or equal)
+      if git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+        echo "  Ancestry: OK — local is descendant of remote (fast-forward possible)"
+      elif git merge-base --is-ancestor "$local_sha" "$remote_sha" 2>/dev/null; then
+        echo "  SKIP: remote is ahead of local; nothing to push"
+        skipped=$((skipped + 1))
+        continue
+      else
+        echo "  DIVERGED: local and remote have diverged; refusing to push (would require force)"
+        echo "  Report this divergence — do not force-push."
+        failed=$((failed + 1))
+        continue
+      fi
+    fi
+
+    # Perform ordinary fast-forward push (no --force, no --delete)
+    echo "  Pushing $branch -> origin/$branch ..."
+    if git push origin "$branch" 2>&1; then
+      echo "  OK: $branch pushed successfully"
+      pushed=$((pushed + 1))
+    else
+      echo "  FAILED: push of $branch was rejected"
+      failed=$((failed + 1))
+    fi
+    echo ""
+  done
+
+  echo "=== Push summary: $pushed pushed, $failed failed, $skipped skipped ==="
+  if [ "$failed" -gt 0 ]; then
+    exit 4
+  fi
+}
+
+###############################################################################
+# agent_to_branch — map an agent role to its team/* branch
+###############################################################################
+
+agent_to_branch() {
+  local agent="$1"
+  case "$agent" in
+    fst-implementation) echo "team/implementation" ;;
+    fst-verification)   echo "team/verification" ;;
+    fst-debugging)      echo "team/debugging" ;;
+    fst-research)       echo "team/research" ;;
+    fst-integration)    echo "team/integration" ;;
+    *)                  echo "" ;;
+  esac
+}
+
+###############################################################################
+# auto_push_branch — automatically publish a team/* branch after a successful commit
+#
+# Preconditions (all must hold, otherwise no push):
+#   - Branch exists locally and is a team/* branch (never main)
+#   - Branch HEAD is a committed SHA (no uncommitted changes considered)
+#   - Remote is reachable
+#   - Local is a descendant of remote (fast-forward possible)
+#   - Remote is not ahead of local
+#   - Branches have not diverged
+#
+# Returns 0 on successful push, 1 on skip/failure (no error exit).
+###############################################################################
+
+auto_push_branch() {
+  local branch="$1"
+  local reason="${2:-automatic publish after successful commit}"
+
+  # Validate: only team/* branches, never main
+  case "$branch" in
+    team/*) ;;
+    *)
+      echo "  AUTO-PUSH SKIP: '$branch' is not a team/* branch (main is excluded)"
+      return 1
+      ;;
+  esac
+
+  # Confirm branch exists locally
+  if ! git rev-parse --verify "$branch" >/dev/null 2>&1; then
+    echo "  AUTO-PUSH SKIP: local branch '$branch' does not exist"
+    return 1
+  fi
+
+  # Confirm remote is reachable
+  if ! git ls-remote --exit-code origin >/dev/null 2>&1; then
+    echo "  AUTO-PUSH SKIP: remote 'origin' not reachable"
+    return 1
+  fi
+
+  local local_sha remote_sha
+  local_sha="$(git rev-parse "$branch")"
+  remote_sha="$(git ls-remote origin "refs/heads/$branch" 2>/dev/null | awk '{print $1}')"
+
+  echo "  AUTO-PUSH: $branch ($reason) — local=$local_sha"
+
+  if [ -z "$remote_sha" ]; then
+    echo "  AUTO-PUSH: branch '$branch' does not exist on origin; creating it"
+  else
+    echo "  AUTO-PUSH: remote=$remote_sha"
+    if git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
+      echo "  AUTO-PUSH: ancestry OK — fast-forward possible"
+    elif git merge-base --is-ancestor "$local_sha" "$remote_sha" 2>/dev/null; then
+      echo "  AUTO-PUSH: SKIP — remote is ahead of local, nothing to push"
+      return 0
+    else
+      echo "  AUTO-PUSH: DIVERGED — refusing to push (would require force-push)"
+      return 1
+    fi
+  fi
+
+  # Perform ordinary fast-forward push (no --force, no --delete)
+  echo "  AUTO-PUSH: pushing $branch -> origin/$branch ..."
+  if git push origin "$branch" 2>&1; then
+    echo "  AUTO-PUSH: OK — $branch published"
+    return 0
+  else
+    echo "  AUTO-PUSH: FAILED — push of $branch was rejected"
+    return 1
+  fi
+}
+
+###############################################################################
+# auto_push_after_collect — trigger automatic push after a successful collect
+#
+# Called from cmd_collect when a task completed with exit code 0 and produced
+# a commit SHA. Pushes the agent's team/* branch only if the commit is present
+# on that branch (exact-SHA validation).
+###############################################################################
+
+auto_push_after_collect() {
+  local agent="$1"
+  local commit_sha="$2"
+
+  if [ -z "$agent" ] || [ -z "$commit_sha" ]; then
+    return 0
+  fi
+
+  # Only auto-push for completed, successful tasks
+  local status
+  status="$(json_read "$AGENT_DIR/$agent.json" "status" 2>/dev/null || echo "")"
+  if [ "$status" != "completed" ]; then
+    echo "  AUTO-PUSH: $agent status is '$status', not 'completed' — skipping"
+    return 0
+  fi
+
+  local branch
+  branch="$(agent_to_branch "$agent")"
+  if [ -z "$branch" ]; then
+    echo "  AUTO-PUSH: no branch mapping for agent '$agent' — skipping"
+    return 0
+  fi
+
+  # Exact-SHA validation: confirm the collected commit SHA is on the agent's branch
+  if ! git merge-base --is-ancestor "$commit_sha" "$branch" 2>/dev/null; then
+    echo "  AUTO-PUSH: commit $commit_sha is NOT on branch $branch — skipping push"
+    return 1
+  fi
+
+  auto_push_branch "$branch" "successful commit $commit_sha by $agent"
+}
+
+###############################################################################
+# cmd_stop — stop a running session
+###############################################################################
 
 cmd_stop() {
   local session_id="${1:-}"
@@ -914,6 +1147,7 @@ main() {
     collect)  cmd_collect "$@" ;;
     sync)     cmd_sync "$@" ;;
     stop)     cmd_stop "$@" ;;
+    push)     cmd_push "$@" ;;
     cleanup)  cmd_cleanup "$@" ;;
     doctor)   cmd_doctor "$@" ;;
     *)
