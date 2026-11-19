@@ -74,6 +74,9 @@ add_library(feinstatic_core
     src/consensus/abci/abci_codec.cpp
     src/consensus/abci/abci_socket_server.cpp
     src/consensus/abci/fst_application.cpp
+    src/consensus/abci/gossip.cpp
+    src/consensus/abci/rate_limiter.cpp
+    src/consensus/abci/validator_peer_set.cpp
     ${PROTO_SRCS}
     src/staking/state.cpp
     src/utxo/encoding.cpp
