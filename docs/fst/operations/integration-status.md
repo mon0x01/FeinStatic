@@ -14,7 +14,7 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
-- Baseline commit SHA: `928ea7b8bbf6e8b9e5aa7a9b6023c163b649f3a4` (HEAD of `team/integration`; merge of FST-REQ-0037 validator entry & exit from `team/implementation` — source `38dc9b5` + ledger `0721816` — plus fst-team lifecycle fix `e0fadab` on top of `53200ee`)
+- Baseline commit SHA: `b8bb23d39cb48cda090779458c2f379635bd4258` (HEAD of `team/integration`; integration-ledger ops commit updating FST-REQ-0038 status, ASan investigation findings, and evidence preservation; includes fst-team automatic publishing triggers and regression tests)
 - Integration worktree: `/home/monil/Desktop/CXX/FeinStatic-agents/integration`
 - Setup commit SHA: `e45824f54f607b73c79c1d49f71c23c0541bd6a0` (setup(fst): add four custom Kilo agents and integration-status ledger)
 - External handoff commits present in `team/integration` history: `bdb07fd` (debugging FST-BUG-0014/0015 fix, merged), `f360985` (implementation FST-REQ-0036 FinalityChecker, merged), `5e1c145` (debugging VDEF-001/VDEF-002 fixes, merged), `ad9bf01` (debugging FST-BUG-0018/0019 ABCI framing + socket-server lifecycle fix, merged), `c573ef9` (implementation docs-only reconciliation, present as ancestor), `38dc9b5` (implementation FST-REQ-0037 validator entry & exit, merged via history-preserving merge `928ea7b`), `0721816` (implementation-status.md ledger update, merged via `928ea7b`). `2e4fb66` (verification gate evidence for `0773794`) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs). `0f55970` (verification baseline evidence at `6f8fa52` across all 5 presets, fst-verification) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs).
@@ -63,7 +63,7 @@ Completed reservations (IT-01 Phase 3 files: consensus/**, staking/**, monetary/
 | team/verification | 7b22760 | fst-verification | team/integration | RECEIVED | 2026-11-18T23:xx:00Z |
 
 ## Integration and review status
-- Last integrated commit: `5e1c145` (merge of fst-debugging VDEF-001/VDEF-002 fixes into `team/integration`; HEAD advances from `bc9c476` → merge commit)
+- Last integrated commit: `928ea7b8bbf6e8b9e5aa7a9b6023c163b649f3a4` (merge of fst-implementation FST-REQ-0037 validator entry & exit into `team/integration`; last source integration commit, HEAD advances to `b8bb23d` via integration-ledger ops commit)
 - Last review: `5e1c14583d46096ad309a3a2149a42bc3dfc4be2` — Verification Agent gate PASSED (debug: configure=0, build=0, tests=0, 343 passed, 0 failed; TSan: configure=0, build=0, tests=0, 3 passed, 0 failed, zero TSan reports); integrated via history-preserving merge
 - Pending review: none
 - Pending handoffs (documentation-only ledger reconciliations, no source to merge into team/integration — acknowledged, no merge required):
@@ -225,7 +225,7 @@ All five worktrees are linked worktrees of the repo at `/home/monil/Desktop/CXX/
 1. Each agent commits only on its own `team/*` branch in its own worktree. Never commit directly to `main`.
 2. No destructive Git operations: no force-push, no history rewrite, no destructive resets. No broad staging: no `git add .` / `git add -A`; stage only explicitly reviewed paths.
 3. Before depending on another agent's work, confirm the exact commit SHA is present (`git log <branch> | grep <SHA>` or `git cat-file -t <SHA>`).
-4. Baseline: `6f8fa522adae39a7909bf7a426563b1bc77867dc` is the common starting point. `team/integration` currently points at `928ea7b8bbf6e8b9e5aa7a9b6023c163b649f3a4` (which includes the baseline). Other `team/*` branches point at their respective migration/setup SHAs (see Five-agent migration SHAs table). New accepted integration commits advance `team/integration` only.
+4. Baseline: `6f8fa522adae39a7909bf7a426563b1bc77867dc` is the common starting point. `team/integration` currently points at `b8bb23d39cb48cda090779458c2f379635bd4258` (which includes the baseline). Other `team/*` branches point at their respective migration/setup SHAs (see Five-agent migration SHAs table). New accepted integration commits advance `team/integration` only.
 
 ### Handoff flow (implementation / debugging → integration)
 1. Producing agent (`fst-implementation` or `fst-debugging`) completes reviewed work, commits it on its `team/*` branch, and reports the handoff to the Integration Agent with: source branch, exact commit SHA, from agent, receiving agent (`fst-integration`), intended target (`team/integration`), status.
@@ -360,7 +360,7 @@ The user explicitly authorizes periodic publishing of FST development branches t
 
 | Branch | Local SHA | Remote SHA | Status | Upstream tracking |
 |--------|-----------|------------|--------|-------------------|
-| `team/integration` | `3a5977ed124b29726b720580337aa58a0a914897` | `3a5977ed124b29726b720580337aa58a0a914897` | PUBLISHED | origin/team/integration |
+| `team/integration` | `b8bb23d39cb48cda090779458c2f379635bd4258` | `b8bb23d39cb48cda090779458c2f379635bd4258` | PUBLISHED | origin/team/integration |
 | `team/implementation` | `8b4ea201c1fd369b0aa40572f74436567b711630` | `8b4ea201c1fd369b0aa40572f74436567b711630` | PUBLISHED | origin/team/implementation |
 | `team/verification` | `d1d9d2ad8dd6ecec10df81d376f5d7d800749430` | `d1d9d2ad8dd6ecec10df81d376f5d7d800749430` | PUBLISHED | origin/team/verification |
 | `team/debugging` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | PUBLISHED | origin/team/debugging |
