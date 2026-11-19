@@ -14,7 +14,7 @@ This agent writes only `docs/fst/operations/integration-status.md`. It never edi
 
 ## Current integration branch and baseline
 - Integration branch: `team/integration`
-- Baseline commit SHA: `5a4f3dd` (HEAD of `team/integration`; FST-REQ-0038 consensus networking methods merged from `b024d0a` via history-preserving merge at `03cb747` + CMakeLists.txt registration; ledger update at `5a4f3dd`; Verification Gate PASSED at `03cb747` — all 5 presets build exit 0, debug 343/343 PASS)
+- Baseline commit SHA: `3e0fb9ce5375742745a4f7ddf23b14ace42514f5` (HEAD of `team/integration`; FST-REQ-0038 consensus networking methods merged from `b024d0a` via history-preserving merge at `03cb747` + CMakeLists.txt registration; Verification Gate PASSED at `03cb747` — all 5 presets build exit 0, debug 343/343 PASS; re-verified by fst-verification task_1795053992 at `03cb747`, exit 0; ledger update at `3e0fb9c` records integration acceptance)
 - Integration worktree: `/home/monil/Desktop/CXX/FeinStatic-agents/integration`
 - Setup commit SHA: `e45824f54f607b73c79c1d49f71c23c0541bd6a0` (setup(fst): add four custom Kilo agents and integration-status ledger)
 - External handoff commits present in `team/integration` history: `bdb07fd` (debugging FST-BUG-0014/0015 fix, merged), `f360985` (implementation FST-REQ-0036 FinalityChecker, merged), `5e1c145` (debugging VDEF-001/VDEF-002 fixes, merged), `ad9bf01` (debugging FST-BUG-0018/0019 ABCI framing + socket-server lifecycle fix, merged), `c573ef9` (implementation docs-only reconciliation, present as ancestor), `38dc9b5` (implementation FST-REQ-0037 validator entry & exit, merged via history-preserving merge `928ea7b`), `0721816` (implementation-status.md ledger update, merged via `928ea7b`), `b024d0a` (implementation FST-REQ-0038 consensus networking methods, merged via history-preserving merge `03cb747`), `03cb747` (merge of fst-implementation FST-REQ-0038 + CMakeLists.txt registration, Verification Gate PASSED). `2e4fb66` (verification gate evidence for `0773794`) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs). `0f55970` (verification baseline evidence at `6f8fa52` across all 5 presets, fst-verification) is NOT yet in `team/integration` history — docs-only, no merge required (see Pending handoffs).
@@ -51,10 +51,10 @@ Completed reservations (IT-01 Phase 3 files: consensus/**, staking/**, monetary/
 | Source branch | Commit SHA | From agent | Intended target | Status | Received at |
 |---------------|------------|------------|-----------------|--------|-------------|
 | team/debugging | bdb07fd482fc2094487fa1407f33e1397973dc99 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T19:31:45Z |
-| team/implementation | c573ef99dc2351972d447842d1bfcc93668caefa | fst-implementation | team/integration | RECEIVED | 2026-11-18T19:52:00Z |
+| team/implementation | c573ef99dc2351972d447842d1bfcc93668caefa | fst-implementation | team/integration | INTEGRATED | 2026-11-18T19:52:00Z |
 | team/verification | 2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e | fst-verification | team/integration | RECEIVED | 2026-11-18T19:55:00Z |
 | team/implementation | 38dc9b5449c5bfbd61fb7512fdd0921763d22f68 | fst-implementation | team/integration | INTEGRATED | 2026-11-18T23:36:00Z |
-| team/verification | b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe | fst-verification | team/integration | RECEIVED | 2026-11-18T23:40:00Z |
+| team/verification | b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe | fst-verification | team/integration | INTEGRATED | 2026-11-18T23:40:00Z |
 | team/verification | 5d0d74b90d73b1188839e411847b7e31c9dde1f3 | fst-verification | team/integration | RECEIVED | 2026-11-18T23:xx:00Z |
 | team/implementation | f360985e98dd882556cc9e6b531ed2b4099ac727 | fst-implementation | team/integration | INTEGRATED | 2026-11-18T20:xx:00Z |
 | team/debugging | 5e1c14583d46096ad309a3a2149a42bc3dfc4be2 | fst-debugging | team/integration | INTEGRATED | 2026-11-18T20:xx:00Z |
@@ -64,13 +64,13 @@ Completed reservations (IT-01 Phase 3 files: consensus/**, staking/**, monetary/
 | team/verification | 7b22760 | fst-verification | team/integration | RECEIVED | 2026-11-18T23:xx:00Z |
 
 ## Integration and review status
-- Last integrated commit: `03cb7477773ce411714d42185dcda03f3d260860` (merge of fst-implementation FST-REQ-0038 consensus networking methods `b024d0a` + CMakeLists.txt registration into `team/integration`; Verification Gate PASSED at `03cb747`; HEAD advances to `5a4f3dd` via integration-ledger ops commit)
+- Last integrated commit: `03cb7477773ce411714d42185dcda03f3d260860` (merge of fst-implementation FST-REQ-0038 consensus networking methods `b024d0a` + CMakeLists.txt registration into `team/integration`; Verification Gate PASSED at `03cb747`; HEAD advances to `3e0fb9ce5375742745a4f7ddf23b14ace42514f5` via integration-ledger ops commit recording integration acceptance)
 - Last review: `03cb7477773ce411714d42185dcda03f3d260860` — Verification Agent gate PASSED (all 5 presets build exit 0, debug 343/343 PASS, tsan 343/343 PASS zero warnings, clang-release -Werror clean; release/asan timing failures pre-existing FST-BUG-0017/VDEF-b85bc4a-002, deferred); integrated via history-preserving merge
 - Pending review: none
 - Pending handoffs:
-  - `c573ef99dc2351972d447842d1bfcc93668caefa` (fst-implementation, team/implementation) — FST-REQ-0036..0044 audit + implementation-status.md reconciliation. Status: RECEIVED, docs-only; PRESENT (already an ancestor of `team/integration` HEAD; docs-only, no merge required). No build gate required; no source to integrate.
+  - `c573ef99dc2351972d447842d1bfcc93668caefa` (fst-implementation, team/implementation) — FST-REQ-0036..0044 audit + implementation-status.md reconciliation. Status: INTEGRATED (already an ancestor of `team/integration` HEAD `3e0fb9ce5375742745a4f7ddf23b14ace42514f5`; docs-only, no merge required). No build gate required; no source to integrate.
   - `2e4fb6636faf4e9e99126bb98b47a9cd145e4a6e` (fst-verification, detached at 0773794) — verification gate evidence for commit `077379458ed1847d704af89a7a5ae5520cfee42d`. Status: RECEIVED, docs-only; NOT yet in `team/integration` history — no merge required per policy; gate evidence retained on `team/verification`. Gate PASSED (debug 343/343; TSan handshake + harness clean).
-  - `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (source branch team/implementation; recorded as from fst-verification — branch attribution to be confirmed) — five-preset verification baseline ops commit at `b85bc4a`. Status: RECEIVED, docs-only; the gate at `b85bc4a` was NOT PASSED (clang-release build failure VDEF-b85bc4a-001, later fixed by `38dc9b5` integrated at `928ea7b`); no merge required as source is superseded by `928ea7b` history.
+  - `b85bc4a7084f38c9c89ca606eb7b9c9ffa6db0fe` (source branch team/implementation; recorded as from fst-verification — branch attribution to be confirmed) — five-preset verification baseline ops commit at `b85bc4a`. Status: INTEGRATED (already an ancestor of `team/integration` HEAD `3e0fb9ce5375742745a4f7ddf23b14ace42514f5`; docs-only; the gate at `b85bc4a` was NOT PASSED (clang-release build failure VDEF-b85bc4a-001, later fixed by `38dc9b5` integrated at `928ea7b`); no merge required as source is superseded by `928ea7b` history).
   - `5d0d74b90d73b1188839e411847b7e31c9dde1f3` (fst-verification, team/verification) — verification evidence commit. Status: RECEIVED, docs-only; no merge required.
   - `0f55970937522c5c04c974584baa86d8ff6d6172` (fst-verification, team/verification) — full 5-preset verification baseline at commit `6f8fa522adae39a7909bf7a426563b1bc77867dc`. Status: RECEIVED, docs-only; NOT yet in `team/integration` history — no merge required per policy; gate evidence recorded in the Verification Gate Evidence section below. Logs: /tmp/kilo/verify-{debug,release,asan,clang-release,tsan}-tests.log.
 
@@ -388,7 +388,7 @@ The user explicitly authorizes periodic publishing of FST development branches t
 
 | Branch | Local SHA | Remote SHA | Status | Upstream tracking |
 |--------|-----------|------------|--------|-------------------|
-| `team/integration` | `b8bb23d39cb48cda090779458c2f379635bd4258` | `b8bb23d39cb48cda090779458c2f379635bd4258` | PUBLISHED | origin/team/integration |
+| `team/integration` | `3e0fb9ce5375742745a4f7ddf23b14ace42514f5` | `3e0fb9ce5375742745a4f7ddf23b14ace42514f5` | PUBLISHED | origin/team/integration |
 | `team/implementation` | `8b4ea201c1fd369b0aa40572f74436567b711630` | `8b4ea201c1fd369b0aa40572f74436567b711630` | PUBLISHED | origin/team/implementation |
 | `team/verification` | `d1d9d2ad8dd6ecec10df81d376f5d7d800749430` | `d1d9d2ad8dd6ecec10df81d376f5d7d800749430` | PUBLISHED | origin/team/verification |
 | `team/debugging` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | `6e3bff7ffb5b14aebdfd5e193236c8983bea1d98` | PUBLISHED | origin/team/debugging |
