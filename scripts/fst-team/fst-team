@@ -67,11 +67,10 @@ declare -A AGENT_BRANCH=(
   [fst-debugging]="team/debugging"
 )
 
-KILO_BIN="kilo"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KILO_BIN="$SCRIPT_DIR/kilo-isolated"
 MAX_WAIT_SECONDS=300
 SESSION_POLL_INTERVAL=2
-
-KILO_BIN="kilo"
 
 ###############################################################################
 # Atomic JSON write helper (single file, no cross-file locking needed)

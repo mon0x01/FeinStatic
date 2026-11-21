@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+#
+# kilo-isolated — FST-dedicated Kilo launcher with configuration isolation
+#
+# Launches the installed Kilo CLI with XDG_CONFIG_HOME pinned to the FST
+# dedicated configuration root, so FST never loads:
+#   * the user's global Kilo configuration (~/.config/kilo/kilo.jsonc),
+#   * other projects' local Kilo configuration, or
+#   * KILO_CONFIG / KILO_CONFIG_DIR / KILO_CONFIG_CONTENT / KILO_DISABLE_PROJECT_CONFIG
+#     overrides inherited from the user's shell.
+#
+# HOME, XDG_DATA_HOME, XDG_STATE_HOME, PATH and Kilo authentication/session
+# locations are deliberately preserved so normal Kilo authentication remains
+# available. Only the configuration *source* is redirected.
+#
+# Usage:
+#   ./scripts/fst-team/kilo-isolated [kilo args...]
+#   ./scripts/fst-team/kilo-isolated run ...
+#
+set -uo pipefail
+
+###############################################################################
+# Paths
+###############################################################################
+
+# FST dedicated Kilo configuration root (XDG_CONFIG_HOME for the Kilo process).
+# Kilo resolves its user config as $XDG_CONFIG_HOME/kilo/kilo.jsonc, i.e.:
+#   ~/.local/state/fst-team/kilo-xdg-config/kilo/kilo.jsonc
+FST_KILO_CONFIG_ROOT="$HOME/.local/state/fst-team/kilo-xdg-config"
+
+# Legacy home-level Kilo configuration directories that Kilo may discover
+# independently of XDG_CONFIG_HOME. Their presence would compromise isolation.
+LEGACY_KILO_DIRS=("$HOME/.kilo" "$HOME/.kilocode")
+
+###############################################################################
+# Helpers
+###############################################################################
+
+fail() {
+  echo "kilo-isolated: ERROR: $*" >&2
+  exit 1
+}
+
+###############################################################################
+# Guard: refuse to run if a legacy home-level Kilo config directory exists.
+###############################################################################
+
+for legacy in "${LEGACY_KILO_DIRS[@]}"; do
+  if [ -e "$legacy" ]; then
+    fail "legacy Kilo configuration directory '$legacy' exists and may be discovered independently of XDG_CONFIG_HOME, which would compromise FST configuration isolation. Remove or relocate it (or set FST_KILO_ALLOW_LEGACY=1 to override)."
+  fi
+done
+
+if [ -n "${FST_KILO_ALLOW_LEGACY:-}" ]; then
+  echo "kilo-isolated: WARNING: FST_KILO_ALLOW_LEGACY set; legacy Kilo config directories not blocked." >&2
+fi
+
+###############################################################################
+# Resolve the installed Kilo executable from the existing PATH.
+###############################################################################
+
+KILO_BIN="$(command -v kilo 2>/dev/null)" || fail "the 'kilo' executable was not found in PATH. Install Kilo or add it to PATH."
+if [ -z "$KILO_BIN" ]; then
+  fail "the 'kilo' executable was not found in PATH. Install Kilo or add it to PATH."
+fi
+
+###############################################################################
+# Isolation environment (this Kilo process only).
+###############################################################################
+
+# Pin XDG_CONFIG_HOME to the FST dedicated root for this process only.
+export XDG_CONFIG_HOME="$FST_KILO_CONFIG_ROOT"
+
+# Unset inherited Kilo configuration overrides so the user's shell environment
+# cannot redirect or inject configuration into the FST Kilo process.
+unset KILO_CONFIG
+unset KILO_CONFIG_DIR
+unset KILO_CONFIG_CONTENT
+unset KILO_DISABLE_PROJECT_CONFIG
+
+# HOME, XDG_DATA_HOME, XDG_STATE_HOME and PATH are deliberately preserved so
+# normal Kilo authentication, credentials, sessions and executable discovery
+# remain available. Only the configuration source is redirected.
+
+###############################################################################
+# Launch Kilo with every argument forwarded unchanged. exec preserves signals
+# and exit codes.
+###############################################################################
+
+exec "$KILO_BIN" "$@"
